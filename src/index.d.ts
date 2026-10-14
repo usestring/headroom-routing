@@ -65,6 +65,8 @@ export interface Selection {
   candidates: Candidate[];
   projectedHeadroom: { id: string; sessionRemaining: number; weeklyRemaining: number }[];
   exploredStates: number;
+  planner: "exact" | "beam";
+  optimal: boolean;
 }
 
 export interface SelectionInput {
@@ -74,6 +76,8 @@ export interface SelectionInput {
   now?: number;
   horizon?: number;
   maxStates?: number;
+  planner?: "exact" | "beam";
+  beamWidth?: number;
 }
 
 export const SESSION_MINUTES: 300;
@@ -121,6 +125,8 @@ export interface AllocationInput {
   forecast?: readonly Request[];
   horizon?: number;
   maxStates?: number;
+  planner?: "exact" | "beam";
+  beamWidth?: number;
 }
 
 export type AllocationResult =

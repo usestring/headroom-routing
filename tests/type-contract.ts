@@ -31,5 +31,11 @@ allocateAgent(state, { id: "other", at: 0, estimatedUnits: 10 });
 // @ts-expect-error Cost estimation has no randomized mode.
 estimateAgentUnits([], { mode: "random" });
 
-selectSubscription({ subscriptions: [subscription], requests: [{ at: 0, units: 10, spendAt: 60 }] });
-allocateAgent(state, { id: "timed", at: 0, estimatedUnits: 10, spendAt: 60, expectedRevision: 0 });
+const timed = selectSubscription({ subscriptions: [subscription], requests: [{ at: 0, units: 10, spendAt: 60 }],
+  planner: "beam", beamWidth: 8 });
+const planner: "exact" | "beam" = timed.planner;
+const optimal: boolean = timed.optimal;
+allocateAgent(state, { id: "timed", at: 0, estimatedUnits: 10, spendAt: 60, expectedRevision: 0, planner: "beam", beamWidth: 8 });
+// @ts-expect-error Only deterministic exact and beam planners are declared.
+selectSubscription({ subscriptions: [subscription], requests: [{ at: 0, units: 1 }], planner: "random" });
+void [planner, optimal];

@@ -64,6 +64,7 @@ expire unused, compared with 200 for earliest-expiry selection. With two 10-unit
 across a reset of a 20-unit session quota, the ledger holds a third launch; both admitted agents
 complete. Snapshot-only selection admits the third and produces one session block.
 
-The reference planner is still bounded and exponential in forecast size. This iteration improves
-admission/accounting and tests realistic information delays; it does not claim a scalable optimal
-planner for large forecast streams or a live production integration.
+The default exact planner is exponential in forecast size. An optional bounded beam planner uses
+the same capacity rules, reports whether pruning occurred, and is compared with the independent
+oracle on small cases. Replay currently uses the default exact planner for each individual launch.
+Neither mode establishes real forecast accuracy or provides a live production integration.
