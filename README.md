@@ -16,6 +16,7 @@ Requires Node.js 22 or newer. No install is needed:
 ```sh
 npm run build
 npm test
+npm run evaluate
 ```
 
 The same runtime tests can run with `bun test ./tests/`. Type declarations are included; a type
@@ -26,7 +27,7 @@ smoke check is `tsc --noEmit --strict --target es2020 --module es2020 --moduleRe
 From this checkout:
 
 ```js
-import { selectSubscription, emptyLedger, reserveAgent } from "./src/index.mjs";
+import { createRoutingState, allocateAgent, estimateAgentUnits } from "./src/index.mjs";
 
 const subscriptions = [{
   id: "account-a",
@@ -39,20 +40,15 @@ const subscriptions = [{
   weeklyResetAt: 10080
 }];
 
-let ledger = emptyLedger();
-const decision = selectSubscription({
-  subscriptions,
-  ledger,
-  requests: [{ at: 0, units: 10 }]
+const state = createRoutingState({ subscriptions });
+const estimate = estimateAgentUnits([10, 10, 10, 10, 20]);
+const allocation = allocateAgent(state, {
+  id: "agent-1",
+  at: 0,
+  estimatedUnits: estimate.units,
+  expectedRevision: state.revision
 });
-
-if (decision.selectedId !== null) {
-  ledger = reserveAgent(ledger, {
-    id: "agent-1",
-    subscriptionId: decision.selectedId,
-    estimatedUnits: 10
-  });
-}
+// Commit allocation.state using a transaction or compare-and-swap before launching.
 ```
 
 The package already declares an ESM export and TypeScript types under the working name
@@ -81,9 +77,42 @@ removes pending debt only when the corresponding snapshot includes it. `complete
 unused estimates after final spend is accounted for; it retains pending charges. Ongoing projected
 work survives a quota reset. `reviseFutureSpend` allows estimates to change.
 
-The caller must make selection and reservation atomic across every allocator sharing an account.
-It must also apply refreshed snapshots and charge acknowledgments atomically. A reported aggregate
-usage change alone does not identify which agent's spend was incorporated.
+`allocateAgent` returns the decision and reservation in one immutable state transition. Retrying an
+accepted agent id returns `already_reserved`; a waiting id can retry after capacity becomes available.
+An outdated `expectedRevision` is rejected when the function receives the current state. The caller
+must commit the returned state with a transaction or compare-and-swap in shared storage **before**
+launching. These helpers cannot prevent two processes from both committing states derived from
+the same old revision. Retries must not start a second agent.
+
+`applyUsageSnapshot` updates remaining capacity and explicitly acknowledged charges together. It
+rejects older observations, conflicting readings at the same time, and acknowledgments of newly
+spent work against a reused observation. A reported aggregate usage change alone does not identify
+which agent's spend was incorporated. Attribution must come from the application's accounting.
+
+## Agent-cost uncertainty
+
+`estimateAgentUnits` uses completed-agent costs known at allocation time. With no history it uses an
+explicit assumption, 10 units by default. During cold start it retains the larger of that assumption
+and the observed maximum. After five samples it uses the nearest-rank 90th percentile over the last
+50 samples, or an explicitly selected rounded-up mean. These defaults are hypotheses, not calibrated
+safety recommendations. Keep histories separate for different models and job classes.
+
+The estimate and session buffer cover different uncertainties. An estimate reserves for a plausible
+agent cost; the buffer leaves pool capacity for cost errors, reporting lag, and untracked work.
+Neither guarantees against arbitrarily expensive agents or unseen external usage. Higher estimates
+can avoid failed launches while also holding work unnecessarily when jobs are cheaper than expected.
+
+## Deterministic replay
+
+`npm run evaluate` prints JSON comparisons against snapshot-only earliest-expiry and headroom
+policies. Seven synthetic scenarios cover idle bursts, expensive cost tails, weekly expiry, sustained
+demand through staggered resets, unseen cost outliers, external usage, and overreservation. Both baseline policies
+respect the same buffers; their omitted reservation tally isolates delayed-accounting effects.
+
+The allocator sees only snapshots and completed cost history available at each launch. Actual costs
+are charged later in a separate simulated provider state. Held launches and upstream quota blocks
+are reported separately. A held launch is attempted once; replay does not model a retry queue.
+Observed results and limitations are in [the replay notes](docs/replay.md).
 
 ## Scope and limits
 

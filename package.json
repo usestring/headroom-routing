@@ -13,10 +13,11 @@
     }
   },
   "types": "./src/index.d.ts",
-  "files": ["src", "README.md", "LICENSE", "docs/theory.md"],
+  "files": ["src", "evaluation", "README.md", "LICENSE", "docs"],
   "scripts": {
-    "build": "node --check src/index.mjs && node --check src/model.mjs && node --check src/reservations.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "build": "node --check src/index.mjs && node --check src/model.mjs && node --check src/reservations.mjs && node --check src/allocation.mjs && node --check src/cost.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "evaluate": "node evaluation/run.mjs"
   },
   "repository": { "type": "git", "url": "https://github.com/usestring/headroom-routing.git" }
 }

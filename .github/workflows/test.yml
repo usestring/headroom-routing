@@ -20,3 +20,5 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm run build
       - run: npm test
+      - run: npx --yes --package typescript@5.9.3 tsc --noEmit --strict --target es2020 --module es2020 --moduleResolution node tests/type-contract.ts
+      - run: npx --yes --package typescript@5.9.3 tsc --noEmit --strict --target es2020 --module nodenext --moduleResolution nodenext tests/esm-types.mts

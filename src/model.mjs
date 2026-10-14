@@ -22,7 +22,7 @@ function admissionPressure(state) {
   return state.reduce((total, entry) => total + (entry.sessionCapacity - entry.sessionRemaining) ** 2 / entry.sessionCapacity, 0);
 }
 
-function validate({ now, horizon, subscriptions, requests, maxStates }) {
+export function validateSelectionInput({ now, horizon, subscriptions, requests, maxStates }) {
   units(now, "now");
   units(horizon, "horizon", now + 1);
   assert(horizon <= now + WEEK_MINUTES, "horizon cannot exceed one week");
@@ -122,7 +122,7 @@ function retryAt(state, request, now, horizon) {
 export function selectSubscription(input) {
   const { now = 0, subscriptions, requests, ledger = emptyLedger(), maxStates = 50_000 } = input;
   const horizon = input.horizon ?? Math.max(now + 1, ...subscriptions.map((entry) => entry.weeklyResetAt));
-  validate({ now, horizon, subscriptions, requests, maxStates });
+  validateSelectionInput({ now, horizon, subscriptions, requests, maxStates });
   const ids = new Set(subscriptions.map((entry) => entry.id));
   for (const agent of ledger.agents) assert(ids.has(agent.subscriptionId), `reservation for unknown subscription: ${agent.subscriptionId}`);
   const initial = [...subscriptions].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map((entry) => {
