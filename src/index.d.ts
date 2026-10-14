@@ -86,3 +86,54 @@ export function reviseFutureSpend(ledger: Ledger, agentId: string, futureUnits: 
 export function completeAgent(ledger: Ledger, agentId: string): Ledger;
 export function acknowledgeCharges(ledger: Ledger, chargeIds: readonly string[], window: "session" | "weekly"): Ledger;
 export function projectedSpend(ledger: Ledger, subscription: Subscription): { futureUnits: number; sessionUnits: number; weeklyUnits: number };
+
+export interface CostEstimatorOptions {
+  defaultUnits?: number;
+  mode?: "mean" | "quantile";
+  quantile?: number;
+  minimumSamples?: number;
+  maxSamples?: number;
+}
+
+export interface CostEstimate {
+  units: number;
+  sampleCount: number;
+  source: "fallback" | "cold_start" | "history";
+  mode: "mean" | "quantile";
+}
+
+export interface RoutingState {
+  subscriptions: readonly Subscription[];
+  ledger: Ledger;
+  observedAt: number;
+  lastAllocatedAt: number;
+  revision: number;
+}
+
+export interface AllocationInput {
+  id: string;
+  at: number;
+  estimatedUnits: number;
+  expectedRevision: number;
+  allowedIds?: readonly string[];
+  forecast?: readonly Request[];
+  horizon?: number;
+  maxStates?: number;
+}
+
+export type AllocationResult =
+  | { state: RoutingState; status: "reserved"; selectedId: string; decision: Selection }
+  | { state: RoutingState; status: "waiting"; selectedId: null; decision: Selection }
+  | { state: RoutingState; status: "already_reserved"; selectedId: string; decision: null };
+
+export interface UsageSnapshotInput {
+  subscriptions: readonly Subscription[];
+  observedAt: number;
+  expectedRevision: number;
+  includedCharges?: { session?: readonly string[]; weekly?: readonly string[] };
+}
+
+export function estimateAgentUnits(history: readonly number[], options?: CostEstimatorOptions): CostEstimate;
+export function createRoutingState(input: { subscriptions: readonly Subscription[]; ledger?: Ledger; observedAt?: number }): RoutingState;
+export function allocateAgent(state: RoutingState, input: AllocationInput): AllocationResult;
+export function applyUsageSnapshot(state: RoutingState, input: UsageSnapshotInput): RoutingState;
