@@ -30,3 +30,6 @@ applyUsageSnapshot(allocation.state, { subscriptions: [subscription], observedAt
 allocateAgent(state, { id: "other", at: 0, estimatedUnits: 10 });
 // @ts-expect-error Cost estimation has no randomized mode.
 estimateAgentUnits([], { mode: "random" });
+
+selectSubscription({ subscriptions: [subscription], requests: [{ at: 0, units: 10, spendAt: 60 }] });
+allocateAgent(state, { id: "timed", at: 0, estimatedUnits: 10, spendAt: 60, expectedRevision: 0 });

@@ -8,7 +8,8 @@ The replay keeps provider capacity separate from the allocator's snapshot. Agent
 estimate, can remain idle, and spend their actual cost only at completion. Reports arrive on a fixed
 schedule. Locally measured charges enter the ledger immediately but remain pending until a report
 includes them. Historical costs update only after successful completion. No future actual cost is
-passed into the selector.
+passed into the selector. Optional `expectedDuration` is a prior timing estimate supplied to
+selection; actual `duration` remains separate. Missing timing retains the immediate-charge forecast.
 
 Resets fully replenish fixed windows. The replay can advance a known reset clock between reports,
 while retaining ongoing work and pending charges in the windows they still affect. Real adapters
@@ -56,6 +57,12 @@ incorporated spend. A provider integration with finer observation timing require
 validated time/observation adapter. Keep the entire account pool represented while its ledger
 retains account reservations. Ledger spend/completion transitions must also advance the storage
 revision in the same transaction.
+
+Two further scenarios test idle agents across resets. When an agent is expected to spend after an
+early weekly reset, reservations select the account with more session room: 190 weekly units
+expire unused, compared with 200 for earliest-expiry selection. With two 10-unit idle commitments
+across a reset of a 20-unit session quota, the ledger holds a third launch; both admitted agents
+complete. Snapshot-only selection admits the third and produces one session block.
 
 The reference planner is still bounded and exponential in forecast size. This iteration improves
 admission/accounting and tests realistic information delays; it does not claim a scalable optimal
