@@ -18,6 +18,21 @@ function addScores(left, right) {
   return Object.fromEntries(scoreFields.map((field) => [field, left[field] + right[field]]));
 }
 
+function comparePlans(left, right) {
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] === right[index]) continue;
+    if (left[index] === null) return 1;
+    if (right[index] === null) return -1;
+    return left[index] < right[index] ? -1 : 1;
+  }
+  return 0;
+}
+
+function stateKey(state, index) {
+  return JSON.stringify([index, state.map((entry) => [entry.sessionRemaining, entry.weeklyRemaining,
+    entry.sessionResetAt, entry.weeklyResetAt, entry.pendingSpend])]);
+}
+
 function admissionPressure(state) {
   return state.reduce((total, entry) => total + (entry.sessionCapacity - entry.sessionRemaining) ** 2 / entry.sessionCapacity, 0);
 }
@@ -145,7 +160,11 @@ function retryAt(state, request, now, horizon) {
 }
 
 export function selectSubscription(input) {
-  const { now = 0, subscriptions, requests, ledger = emptyLedger(), maxStates = 50_000 } = input;
+  const { now = 0, subscriptions, requests, ledger = emptyLedger(), maxStates = 50_000,
+    planner = "exact", beamWidth = 32 } = input;
+  assert(planner === "exact" || planner === "beam", "unknown planner");
+  units(beamWidth, "beamWidth", 1);
+  assert(beamWidth <= 256, "beamWidth cannot exceed 256");
   const horizon = input.horizon ?? Math.max(now + 1, ...subscriptions.map((entry) => entry.weeklyResetAt));
   validateSelectionInput({ now, horizon, subscriptions, requests, maxStates });
   const ids = new Set(subscriptions.map((entry) => entry.id));
@@ -167,9 +186,9 @@ export function selectSubscription(input) {
   let visited = 0;
 
   function solve(state, index, from) {
-    const key = JSON.stringify([index, state.map((entry) => [entry.sessionRemaining, entry.weeklyRemaining, entry.sessionResetAt, entry.weeklyResetAt, entry.pendingSpend])]);
+    const key = stateKey(state, index);
     if (memo.has(key)) return memo.get(key);
-    assert(++visited <= maxStates, "theoretical search limit exceeded; shorten the forecast");
+    assert(++visited <= maxStates, "theoretical search limit exceeded; shorten the forecast or use planner: beam");
     const at = index === requests.length ? horizon : requests[index].at;
     const advanced = advance(state, from, at, horizon);
     if (index === requests.length) return { score: advanced.score, plan: [] };
@@ -191,17 +210,52 @@ export function selectSubscription(input) {
     return best;
   }
 
+  let pruned = false;
+  function beamSolve(state, startIndex, from) {
+    let frontier = [{ state, score: zeroScore(), plan: [] }];
+    for (let index = startIndex; index < requests.length; index++) {
+      const request = requests[index];
+      const expanded = new Map();
+      for (const node of frontier) {
+        const advanced = advance(node.state, from, request.at, horizon);
+        const fitting = advanced.state.filter((entry) => fits(entry, request));
+        for (const candidate of fitting.length ? fitting : [null]) {
+          visited++;
+          const next = candidate ? commitRequest(advanced.state, candidate, request) : advanced.state;
+          const prefix = candidate ? { ...advanced.score, admissionPressure: admissionPressure(next) }
+            : { ...advanced.score, blockedRequests: 1 };
+          const score = addScores(node.score, prefix);
+          const option = { state: next, score, plan: [...node.plan, candidate?.id ?? null] };
+          const key = stateKey(next, index + 1);
+          const previous = expanded.get(key);
+          const comparison = previous ? compareScores(option.score, previous.score) : -1;
+          if (comparison < 0 || (comparison === 0 && comparePlans(option.plan, previous.plan) < 0)) expanded.set(key, option);
+        }
+      }
+      const ranked = [...expanded.values()].map((node) => ({ ...node,
+        rank: addScores(node.score, advance(node.state, request.at, horizon, horizon).score) }));
+      ranked.sort((a, b) => compareScores(a.rank, b.rank) || comparePlans(a.plan, b.plan));
+      pruned ||= ranked.length > beamWidth;
+      frontier = ranked.slice(0, beamWidth);
+      from = request.at;
+    }
+    const completed = frontier.map((node) => ({ score: addScores(node.score, advance(node.state, from, horizon, horizon).score), plan: node.plan }));
+    completed.sort((a, b) => compareScores(a.score, b.score) || comparePlans(a.plan, b.plan));
+    return completed[0];
+  }
+  const search = planner === "exact" ? solve : beamSolve;
+
   const { state: current, score: currentResetScore } = advance(initial, now, now, horizon);
   const candidates = [];
   for (const candidate of current.filter((entry) => fits(entry, requests[0]))) {
     const state = commitRequest(current, candidate, requests[0]);
     const prefix = { ...currentResetScore, admissionPressure: admissionPressure(state) };
-    const suffix = solve(state, 1, now);
+    const suffix = search(state, 1, now);
     candidates.push({ id: candidate.id, score: addScores(prefix, suffix.score), plan: [candidate.id, ...suffix.plan] });
   }
   let best;
   for (const candidate of candidates) if (!best || compareScores(candidate.score, best.score) < 0) best = candidate;
-  const blocked = best == null ? solve(initial, 0, now) : null;
+  const blocked = best == null ? search(initial, 0, now) : null;
   return {
     selectedId: best?.id ?? null,
     reason: best ? "selected" : "no_capacity",
@@ -210,6 +264,8 @@ export function selectSubscription(input) {
     plan: best?.plan ?? blocked.plan,
     candidates,
     projectedHeadroom: current.map((entry) => ({ id: entry.id, sessionRemaining: entry.sessionRemaining, weeklyRemaining: entry.weeklyRemaining })),
-    exploredStates: visited
+    exploredStates: visited,
+    planner,
+    optimal: planner === "exact" || !pruned
   };
 }

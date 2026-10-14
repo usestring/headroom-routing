@@ -7,7 +7,8 @@ projected-spend ledger for running and idle agents.
 The module has no runtime dependencies. It is an executable theory with scenario tests, rather than
 a production allocator: provider adapters, persistence, atomic transactions, and measured cost
 estimates belong in the application that uses it. The exact planner is intended for small forecasts
-and for evaluating cheaper routing policies.
+and for evaluating cheaper routing policies. An optional beam planner provides bounded forecast
+search and explicitly reports when its result is approximate.
 
 ## Run locally
 
@@ -127,8 +128,12 @@ days. Sliding windows and windows activated by first use require different state
 The planner assumes one work unit charges both windows equally.
 
 A deterministic choice is not a guarantee about unknown future demand. Forecast and estimate
-quality determine how useful its predictions are. Search is bounded to 50,000 states by default
-and fails explicitly when the bound is exceeded.
+quality determine how useful its predictions are. The default exact search is bounded to 50,000 states
+and fails explicitly when the bound is exceeded. For larger forecasts, choose `planner: "beam"`
+and `beamWidth` (1..256, default 32). It evaluates every current candidate while pruning suffix
+states to that width. Results include `planner` and `optimal`; any beam pruning reports
+`optimal: false`. Bounded search can miss future request fits and is tested with an explicit
+counterexample. Both modes require every admitted estimate to fit both buffered quota windows.
 
 Read [the full theory and OSS comparison](docs/theory.md) for the objective, timing semantics,
 reservation reconciliation, scenario expectations, and integration requirements.

@@ -59,15 +59,16 @@ test("multiple commitments can settle out of admission order", () => {
   assert.deepEqual(choose(subscriptions, requests).plan, ["a", "a", "a"]);
 });
 
-test("allocator passes expected spend timing while retaining actual ledger debt", () => {
+test("allocator passes expected spend timing and planner configuration while retaining actual ledger debt", () => {
   const state = createRoutingState({ subscriptions: [sub("early", { sessionRemaining: 4, weeklyResetAt: 10 }), sub("later")] });
   const result = allocateAgent(state, { id: "idle", at: 0, estimatedUnits: 2, spendAt: 20,
-    expectedRevision: 0 });
+    expectedRevision: 0, planner: "beam", beamWidth: 8 });
   assert.equal(result.selectedId, "later");
+  assert.equal(result.decision.planner, "beam");
   assert.equal(result.state.ledger.agents[0].futureUnits, 2);
 });
 
-test("exact plans agree with an independent delayed-spend oracle on 6912 cases", () => {
+test("exact and unpruned beam plans agree with an independent delayed-spend oracle on 6912 cases", () => {
   let checked = 0;
   for (const aRemaining of [0, 1, 2, 3]) for (const bRemaining of [0, 1, 2, 3]) {
     for (const firstUnits of [1, 2, 3]) for (const secondUnits of [1, 2, 3]) {
@@ -78,9 +79,12 @@ test("exact plans agree with an independent delayed-spend oracle on 6912 cases",
           sub("b", { sessionCapacity: 3, sessionRemaining: bRemaining, weeklyCapacity: 4, weeklyRemaining: 4, weeklyResetAt: 6 })];
           const requests = [{ at: 0, units: firstUnits, spendAt: firstSpend }, { at: 2, units: secondUnits, spendAt: secondSpend, allowedIds }];
           const expected = enumerate(subscriptions, requests, 6);
-          const actual = choose(subscriptions, requests, { horizon: 6 });
-          assert.deepEqual(actual.plan, expected.plan, JSON.stringify({ subscriptions, requests }));
-          for (const [i, value] of Object.values(actual.score).entries()) assert(Math.abs(value - expected.score[i]) < 1e-8);
+          for (const planner of ["exact", "beam"]) {
+            const actual = choose(subscriptions, requests, { horizon: 6, planner, beamWidth: 8 });
+            assert.deepEqual(actual.plan, expected.plan, JSON.stringify({ subscriptions, requests, planner }));
+            for (const [i, value] of Object.values(actual.score).entries()) assert(Math.abs(value - expected.score[i]) < 1e-8);
+            assert.equal(actual.optimal, true);
+          }
           checked++;
         }
       }
@@ -89,11 +93,57 @@ test("exact plans agree with an independent delayed-spend oracle on 6912 cases",
   assert.equal(checked, 6912);
 });
 
+test("beam planner handles 100 simultaneous requests across a dozen accounts within its node bound", () => {
+  const subscriptions = Array.from({ length: 12 }, (_, i) => sub(String(i).padStart(2, "0"), {
+    sessionCapacity: 100, sessionRemaining: 100, sessionBuffer: 10, weeklyCapacity: 1000, weeklyRemaining: 1000 }));
+  const requests = Array.from({ length: 100 }, () => ({ at: 0, units: 10, spendAt: 60 }));
+  const result = choose(subscriptions, requests, { planner: "beam", beamWidth: 4 });
+  assert.equal(result.selectedId, "00");
+  assert.equal(result.plan.length, 100);
+  assert.equal(result.score.blockedRequests, 0);
+  assert.equal(result.optimal, false);
+  assert(result.exploredStates <= subscriptions.length * requests.length * 4 * subscriptions.length);
+  const counts = subscriptions.map(({ id }) => result.plan.filter((selected) => selected === id).length);
+  assert.equal(Math.max(...counts), 9);
+  assert.equal(Math.min(...counts), 8);
+});
+
+test("beam pruning is deterministic under reordered subscriptions", () => {
+  const subscriptions = [sub("a"), sub("b"), sub("c")];
+  const requests = [{ at: 0, units: 3, spendAt: 4 }, { at: 1, units: 3 }, { at: 2, units: 3 }, { at: 3, units: 3 }];
+  const input = { planner: "beam", beamWidth: 1 };
+  assert.deepEqual(choose(subscriptions, requests, input), choose(subscriptions.toReversed(), requests, input));
+});
+
+test("beam also holds requests that cannot fit rather than exceeding quota", () => {
+  const result = choose([sub("a")], [{ at: 0, units: 11 }, { at: 1, units: 11 }], { planner: "beam" });
+  assert.equal(result.selectedId, null);
+  assert.equal(result.retryAt, null);
+  assert.deepEqual(result.plan, [null, null]);
+});
+
 for (const [name, request, options] of [
   ["spend before admission", { at: 0, units: 1, spendAt: -1 }, {}],
   ["fractional spend time", { at: 0, units: 1, spendAt: 0.5 }, {}],
-  ["unbounded spend time", { at: 0, units: 1, spendAt: 10081 }, {}]
+  ["unbounded spend time", { at: 0, units: 1, spendAt: 10081 }, {}],
+  ["unknown planner", { at: 0, units: 1 }, { planner: "random" }],
+  ["zero beam width", { at: 0, units: 1 }, { beamWidth: 0 }],
+  ["excessive beam width", { at: 0, units: 1 }, { beamWidth: 257 }]
 ]) test(`rejects ${name}`, () => assert.throws(() => choose([sub("a")], [request], options)));
+
+test("narrow beam can lose future pinned work and reports that approximation", () => {
+  const subscriptions = [sub("a", { weeklyResetAt: 60 }), sub("b", { weeklyResetAt: 80 }),
+    sub("c", { sessionCapacity: 6, sessionRemaining: 6 })];
+  const requests = [{ at: 0, units: 1, allowedIds: ["c"] }, { at: 1, units: 4 },
+    { at: 2, units: 10, allowedIds: ["a"] }, { at: 3, units: 10, allowedIds: ["b"] }];
+  const exact = choose(subscriptions, requests);
+  const narrow = choose(subscriptions, requests, { planner: "beam", beamWidth: 1 });
+  assert.deepEqual(exact.plan, ["c", "c", "a", "b"]);
+  assert.equal(exact.score.blockedRequests, 0);
+  assert.deepEqual(narrow.plan, ["c", "a", null, "b"]);
+  assert.equal(narrow.score.blockedRequests, 1);
+  assert.equal(narrow.optimal, false);
+});
 
 test("100 seeded five-request fleets match the independent oracle including delayed settlements", () => {
   let seed = 73;
@@ -107,8 +157,11 @@ test("100 seeded five-request fleets match the independent oracle including dela
     const requests = Array.from({ length: 5 }, (_, i) => ({ at: i, units: 1 + draw(4), spendAt: i + draw(7 - i),
       ...(draw(3) === 0 ? { allowedIds: [["a", "b", "c"][draw(3)]] } : {}) }));
     const expected = enumerate(subscriptions, requests, 10);
-    const actual = choose(subscriptions, requests, { horizon: 10 });
-    assert.deepEqual(actual.plan, expected.plan, JSON.stringify({ scenario, subscriptions, requests }));
-    for (const [i, value] of Object.values(actual.score).entries()) assert(Math.abs(value - expected.score[i]) < 1e-8);
+    for (const planner of ["exact", "beam"]) {
+      const actual = choose(subscriptions, requests, { horizon: 10, planner, beamWidth: 256 });
+      assert.deepEqual(actual.plan, expected.plan, JSON.stringify({ scenario, planner, subscriptions, requests }));
+      for (const [i, value] of Object.values(actual.score).entries()) assert(Math.abs(value - expected.score[i]) < 1e-8);
+      assert.equal(actual.optimal, true);
+    }
   }
 });

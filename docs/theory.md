@@ -174,7 +174,7 @@ forecast arrival, not an actual dispatched 429. Queuing and delayed execution ar
 This is exact for the declared objective and work-conserving forecasts within the numeric
 comparison tolerance. Search is exponential in the worst case, bounded by `maxStates` (50,000 by
 default) and 100 requests. Exceeding the bound fails explicitly. Use it as a small-case oracle,
-then assess a bounded planner or heuristic against it before connecting real routing.
+or use the explicitly bounded beam planner described below. Neither establishes real forecast accuracy.
 
 ## Expected behavior
 
@@ -240,3 +240,56 @@ commitments. In addition to the original 576 cases, 6,912 timing/reset combinati
 five-request fleets check both selected plans and all score components. Boundary scenarios cover
 settlement before, at, and after resets; out-of-order settlement; simultaneous window resets; and
 commitments beyond the horizon.
+
+## Bounded planning
+
+`planner: "exact"` is the default. Its memoized search keeps the idealized reference behavior and
+fails if `maxStates` is exceeded. Use `planner: "beam"` when a larger forecast needs an explicit
+work bound. `beamWidth` is an integer from 1 through 256, defaulting to 32. It limits retained suffix
+paths independently for every feasible choice of the current subscription; no current candidate is
+removed solely by beam pruning.
+
+At each forecast arrival, beam search applies the same reset/settlement transitions, expands every
+compatible account that fits, and records a wait only when none fits. For pruning, it ranks paths
+by their accumulated objective plus the cost of letting their remaining headroom reach the horizon
+with no additional arrivals. Equivalent states retain only their best accumulated score and id-order plan before width pruning.
+It retains the lowest ranked distinct states, with stable id-order ties. At the
+end it evaluates the complete forecast score and chooses the best finished path. Final `score` and
+`plan` describe that completed path; the pruning rank is never reported as its objective.
+
+For `A` subscriptions, `R` forecast requests, and width `B`, at most
+`max(1,A) * R * B * max(1,A)` suffix nodes are generated. Per-node accounting and horizon projection
+also cost time; this is a node bound, not a latency guarantee. The beam does not use `maxStates`,
+which remains the exact solver's memoization bound. Both modes retain the 100-request, one-week
+input limits. Wider beams use more memory and compute; their results are not guaranteed to improve
+monotonically because pruning is heuristic.
+
+Every result identifies its `planner` and whether the search was `optimal` for the declared model.
+Exact results and beam results with no pruning are optimal within the numeric comparison tolerance.
+Any beam pruning sets `optimal: false`, even if the winning plan happens to match the exact result.
+The same inputs and options always produce the same selection and plan. A bounded result still
+requires every accepted estimate to fit both buffered windows.
+
+The small-case timing grids and seeded fleets also compare unpruned beam output against the
+independent minute oracle. A 100-request simultaneous burst across 12 equal subscriptions uses each
+account for eight or nine launches and predicts no blocks. A deliberate narrow-beam counterexample
+returns `[c,a,null,b]`, while the exact solver returns `[c,c,a,b]` and serves all four requests. The
+second small request must use `c` to preserve the larger requests pinned to `a` and `b`; pruning can
+lose that future fit. This prevents mistaking bounded planning for an optimality guarantee.
+
+## Conditional admission guarantee
+
+The reservation rule can prevent overcommitment when snapshots are correct, all work is tracked,
+actual remaining costs do not exceed reserved costs, reset semantics match the model, and allocation
+and ledger updates commit atomically. Reserving reduces available headroom before launch. Measured
+spend replaces future debt with pending debt, acknowledgment replaces that debt with reported usage,
+and a reset discards only the charge from its expired window while carrying unpaid work forward.
+Each transition retains the cost that can still hit the window. Completion releases only unused
+future cost after final spend is accounted for.
+
+This guarantee concerns estimated admission and accounting, not accurate future demand or unknown
+agent cost. The exact solver minimizes predicted unserved requests before weekly waste. Beam search
+can miss a better forecast plan, and a mean or empirical percentile can underestimate an actual job.
+Buffers provide finite protection against estimation error and unseen external work; they cannot
+cover arbitrary usage. Replays retain those failures and the overreservation case so both sides of
+the utilization/risk tradeoff remain visible.
