@@ -46,6 +46,7 @@ const allocation = allocateAgent(state, {
   id: "agent-1",
   at: 0,
   estimatedUnits: estimate.units,
+  spendAt: 60,
   expectedRevision: state.revision
 });
 // Commit allocation.state using a transaction or compare-and-swap before launching.
@@ -67,6 +68,10 @@ admissible headroom = reported remaining
 A launch reserves its entire estimated cost immediately, even if the agent stays idle. It must fit
 within both the session and weekly windows. For 50 units remaining, a 10-unit buffer, and a 10-unit
 agent estimate, four agents may launch against an unchanged provider snapshot.
+
+Optional `spendAt` describes when a forecast job is expected to spend its cost. Its full reservation
+survives intervening resets, and only spend before weekly expiry counts toward using that quota.
+Omitting it retains the immediate-charge forecast. Expected times never release actual ledger debt.
 
 Among accounts that fit, the reference planner minimizes predicted unserved requests first, weekly
 waste second, and five-hour concentration afterward. When weekly waste ties, it prefers quota that
@@ -105,8 +110,8 @@ can avoid failed launches while also holding work unnecessarily when jobs are ch
 ## Deterministic replay
 
 `npm run evaluate` prints JSON comparisons against snapshot-only earliest-expiry and headroom
-policies. Seven synthetic scenarios cover idle bursts, expensive cost tails, weekly expiry, sustained
-demand through staggered resets, unseen cost outliers, external usage, and overreservation. Both baseline policies
+policies. Nine synthetic scenarios cover idle bursts, expensive cost tails, weekly expiry, sustained
+demand through staggered resets, unseen cost outliers, external usage, overreservation, and idle work crossing weekly and session resets. Both baseline policies
 respect the same buffers; their omitted reservation tally isolates delayed-accounting effects.
 
 The allocator sees only snapshots and completed cost history available at each launch. Actual costs

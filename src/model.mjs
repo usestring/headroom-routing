@@ -50,6 +50,8 @@ export function validateSelectionInput({ now, horizon, subscriptions, requests, 
     units(request.at, "request.at", previousAt);
     assert(request.at < horizon, "request must arrive before the horizon");
     units(request.units, "request.units", 1);
+    if (request.spendAt != null) units(request.spendAt, "request.spendAt", request.at);
+    assert((request.spendAt ?? request.at) <= now + WEEK_MINUTES, "expected spend exceeds one week");
     if (request.allowedIds != null) {
       assert(Array.isArray(request.allowedIds), "allowedIds must be an array");
       for (const id of request.allowedIds) assert(ids.has(id), `unknown allowed subscription: ${id}`);
@@ -68,28 +70,51 @@ function fits(subscription, request) {
     && subscription.sessionRemaining >= request.units && subscription.weeklyRemaining >= request.units;
 }
 
+function outstandingSpend(entry) {
+  return entry.pendingSpend.reduce((total, charge) => total + charge.units, 0);
+}
+
+function commitRequest(state, candidate, request) {
+  return state.map((entry) => {
+    if (entry.id !== candidate.id) return entry;
+    const pendingSpend = [...entry.pendingSpend];
+    if ((request.spendAt ?? request.at) > request.at) {
+      const index = pendingSpend.findIndex((charge) => charge.at === request.spendAt);
+      if (index >= 0) pendingSpend[index] = { at: request.spendAt, units: pendingSpend[index].units + request.units };
+      else pendingSpend.push({ at: request.spendAt, units: request.units });
+      pendingSpend.sort((a, b) => a.at - b.at);
+    }
+    return { ...entry, sessionRemaining: entry.sessionRemaining - request.units,
+      weeklyRemaining: entry.weeklyRemaining - request.units, pendingSpend };
+  });
+}
+
 function advance(state, from, to, horizon) {
   const score = zeroScore();
   const next = state.map((subscription) => {
-    const entry = { ...subscription };
-    const sessionEnd = Math.min(to, entry.sessionResetAt);
+    const entry = { ...subscription, pendingSpend: [...subscription.pendingSpend] };
+    let at = from;
+    for (let event = Math.min(entry.sessionResetAt, entry.weeklyResetAt, entry.pendingSpend[0]?.at ?? Infinity);
+      event <= to; event = Math.min(entry.sessionResetAt, entry.weeklyResetAt, entry.pendingSpend[0]?.at ?? Infinity)) {
+      const used = entry.sessionCapacity - entry.sessionRemaining;
+      score.sessionExposure += used * used / entry.sessionCapacity * (event - at) / SESSION_MINUTES;
+      if (entry.sessionResetAt === event) {
+        entry.sessionRemaining = entry.sessionRenewedRemaining - outstandingSpend(entry);
+        entry.sessionResetAt += SESSION_MINUTES;
+      }
+      if (entry.weeklyResetAt === event) {
+        const wasted = Math.max(0, entry.weeklyRemaining + entry.projectedFutureUnits
+          + outstandingSpend(entry) + (entry.weeklyBuffer ?? 0));
+        score.expiredWeeklyUnits += wasted;
+        score.earlyExpiryUnitMinutes += wasted * (horizon - event + 1);
+        entry.weeklyRemaining = entry.weeklyRenewedRemaining - outstandingSpend(entry);
+        entry.weeklyResetAt += WEEK_MINUTES;
+      }
+      entry.pendingSpend = entry.pendingSpend.filter((charge) => charge.at !== event);
+      at = event;
+    }
     const used = entry.sessionCapacity - entry.sessionRemaining;
-    score.sessionExposure += used * used / entry.sessionCapacity * Math.max(0, sessionEnd - from) / SESSION_MINUTES;
-    if (entry.sessionResetAt <= to) {
-      const periods = Math.floor((to - entry.sessionResetAt) / SESSION_MINUTES) + 1;
-      const duration = to - Math.max(from, entry.sessionResetAt);
-      const reserved = entry.sessionCapacity - entry.sessionRenewedRemaining;
-      score.sessionExposure += reserved * reserved / entry.sessionCapacity * duration / SESSION_MINUTES;
-      entry.sessionRemaining = entry.sessionRenewedRemaining;
-      entry.sessionResetAt += periods * SESSION_MINUTES;
-    }
-    while (entry.weeklyResetAt <= to) {
-      const wasted = Math.max(0, entry.weeklyRemaining + entry.projectedFutureUnits + (entry.weeklyBuffer ?? 0));
-      score.expiredWeeklyUnits += wasted;
-      score.earlyExpiryUnitMinutes += wasted * (horizon - entry.weeklyResetAt + 1);
-      entry.weeklyRemaining = entry.weeklyRenewedRemaining;
-      entry.weeklyResetAt += WEEK_MINUTES;
-    }
+    score.sessionExposure += used * used / entry.sessionCapacity * (to - at) / SESSION_MINUTES;
     return entry;
   });
   return { state: next, score };
@@ -131,6 +156,7 @@ export function selectSubscription(input) {
       ...entry,
       availableAt: entry.availableAt ?? now,
       projectedFutureUnits: projected.futureUnits,
+      pendingSpend: [],
       sessionRemaining: entry.sessionRemaining - projected.sessionUnits - (entry.sessionBuffer ?? 0),
       weeklyRemaining: entry.weeklyRemaining - projected.weeklyUnits - (entry.weeklyBuffer ?? 0),
       sessionRenewedRemaining: entry.sessionCapacity - projected.futureUnits - (entry.sessionBuffer ?? 0),
@@ -141,7 +167,7 @@ export function selectSubscription(input) {
   let visited = 0;
 
   function solve(state, index, from) {
-    const key = JSON.stringify([index, state.map((entry) => [entry.sessionRemaining, entry.weeklyRemaining, entry.sessionResetAt, entry.weeklyResetAt])]);
+    const key = JSON.stringify([index, state.map((entry) => [entry.sessionRemaining, entry.weeklyRemaining, entry.sessionResetAt, entry.weeklyResetAt, entry.pendingSpend])]);
     if (memo.has(key)) return memo.get(key);
     assert(++visited <= maxStates, "theoretical search limit exceeded; shorten the forecast");
     const at = index === requests.length ? horizon : requests[index].at;
@@ -151,9 +177,7 @@ export function selectSubscription(input) {
     const candidates = advanced.state.filter((entry) => fits(entry, request));
     let best;
     for (const candidate of candidates) {
-      const next = advanced.state.map((entry) => entry.id === candidate.id ? {
-        ...entry, sessionRemaining: entry.sessionRemaining - request.units, weeklyRemaining: entry.weeklyRemaining - request.units
-      } : entry);
+      const next = commitRequest(advanced.state, candidate, request);
       const suffix = solve(next, index + 1, at);
       const prefix = { ...advanced.score, admissionPressure: admissionPressure(next) };
       const option = { score: addScores(prefix, suffix.score), plan: [candidate.id, ...suffix.plan] };
@@ -170,9 +194,7 @@ export function selectSubscription(input) {
   const { state: current, score: currentResetScore } = advance(initial, now, now, horizon);
   const candidates = [];
   for (const candidate of current.filter((entry) => fits(entry, requests[0]))) {
-    const state = current.map((entry) => entry.id === candidate.id ? {
-      ...entry, sessionRemaining: entry.sessionRemaining - requests[0].units, weeklyRemaining: entry.weeklyRemaining - requests[0].units
-    } : entry);
+    const state = commitRequest(current, candidate, requests[0]);
     const prefix = { ...currentResetScore, admissionPressure: admissionPressure(state) };
     const suffix = solve(state, 1, now);
     candidates.push({ id: candidate.id, score: addScores(prefix, suffix.score), plan: [candidate.id, ...suffix.plan] });

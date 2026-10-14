@@ -44,11 +44,12 @@ The window model is a full replenishment at an observed reset, followed by fixed
 10,080-minute periods. It does not assume gradual refill. A genuinely sliding window needs a
 timestamped spend history; a window anchored by first use needs an activation transition. A single
 reported percentage/reset pair cannot resolve either behavior. Verify the provider's semantics
-before integrating. Request cost is treated as charged at admission, conservatively reserving the
-entire agent's estimated work rather than assuming that a mid-agent reset will rescue it.
+before integrating. Request cost is reserved in full at admission. The forecast charges it then
+unless an expected `spendAt` is supplied; a mid-agent reset never rescues a request that cannot fit
+when it launches.
 
 `requests[0]` is the launch being decided, at `now`. Later entries are a caller-supplied deterministic
-forecast, with `{at, units, allowedIds?}`. Compatibility belongs in `allowedIds`; include every
+forecast, with `{at, units, spendAt?, allowedIds?}`. Compatibility belongs in `allowedIds`; include every
 binding model-specific weekly limit when adapting real provider data. The horizon covers every
 current weekly reset and is at most one week. Requests at the horizon are outside the forecast.
 The default horizon is the latest current weekly reset, or one minute after now if all just reset.
@@ -152,12 +153,13 @@ order. Only the two floating pressure terms use a `1e-9` comparison tolerance.
 The ledger's current future reservations are conservatively frozen through the forecast. They
 remain committed after resets until the caller supplies completion or revised estimates. This
 can overestimate future contention. The forecast's new launches are charged in full at their
-arrival and reset normally; they are not charged twice through the ledger.
+arrival by default. With `spendAt`, their unspent commitments survive resets until settlement.
+They are not charged twice through the ledger.
 
 ## How the reference implementation computes a choice
 
-`src/model.mjs` uses memoized dynamic programming. A state contains remaining capacity and next reset
-times for every subscription. At each forecast arrival it applies all intervening resets, tries
+`src/model.mjs` uses memoized dynamic programming. A state contains remaining capacity, unspent forecast commitments, and next reset
+times for every subscription. At each forecast arrival it applies all intervening resets and settlements, tries
 every compatible account with capacity, and keeps the best suffix under the tuple. If none fits,
 it records an unserved request and proceeds without overdrawing any account. It also integrates
 pressure between events and accounts for weekly expiry through the horizon.
@@ -207,3 +209,34 @@ histories with their information available at the time, measure unused weekly un
 limit incidents, and compare against earliest-expiry and headroom-only baselines before rollout.
 Perfect-forecast tests establish the theoretical choices; they do not establish real-world forecast
 accuracy or tune the buffer.
+
+## Expected spend timing
+
+A request can supply `spendAt`, an integer minute at or after admission and within one week of
+`now`. The entire cost still has to fit both windows immediately. In the forecast, it stays held
+until that time and is charged as one lump then. Resets replenish capacity while carrying unspent
+commitments into the new window. Settlement replaces a hold with actual spend; it does not create
+extra headroom. At a shared timestamp, resets happen before settlement, then arrivals in supplied
+order. Spend at the weekly reset belongs to the renewed window.
+
+Only projected spend before a weekly reset reduces that window's predicted waste. A reservation
+for an idle agent that will spend after the reset cannot count as finishing the old quota. For
+example, with an early weekly reset in 10 minutes and expected spend in 20 minutes, an account with
+more session headroom can win because neither account can burn the early quota with that job.
+
+Omitting `spendAt` preserves the immediate-charge forecast. Supply timing estimates for jobs that
+can remain idle across resets. This is a single-lump timing model; distributed spend across an
+agent's lifetime requires a spend schedule rather than claiming this estimate describes every
+provider charge. A timestamp after the evaluation horizon is allowed and leaves the commitment
+unspent in that forecast.
+
+Timing is a forecast input. The actual ledger never releases a reservation when an expected time
+passes; only measured spend, revised estimates, and verified completion change real debt.
+`allocateAgent` accepts `spendAt` for selection and still reserves the full cost before launch.
+Existing ledger future work remains frozen in the forecast because its settlement time is unknown.
+
+The independent minute-by-minute oracle keeps provider remaining units separate from unpaid
+commitments. In addition to the original 576 cases, 6,912 timing/reset combinations and 100 seeded
+five-request fleets check both selected plans and all score components. Boundary scenarios cover
+settlement before, at, and after resets; out-of-order settlement; simultaneous window resets; and
+commitments beyond the horizon.

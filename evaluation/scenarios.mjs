@@ -17,5 +17,13 @@ export const SCENARIOS = [
   { name: "unseen-external-spend", subscriptions: [account("a")], agents: burst(4, 10), horizon: 120, reportInterval: 120,
     externalSpend: [{ at: 1, subscriptionId: "a", units: 30 }] },
   { name: "tail-overreservation", subscriptions: [account("a", { weeklyRemaining: 50, weeklyResetAt: 120 })],
-    agents: burst(4, 10), history: [10, 10, 10, 10, 20], horizon: 120, reportInterval: 120 }
+    agents: burst(4, 10), history: [10, 10, 10, 10, 20], horizon: 120, reportInterval: 120 },
+  { name: "idle-across-weekly-reset", subscriptions: [account("early", { sessionRemaining: 40, sessionBuffer: 0,
+    weeklyCapacity: 100, weeklyRemaining: 100, weeklyResetAt: 10 }), account("later", { sessionRemaining: 100,
+    sessionBuffer: 0, weeklyCapacity: 100, weeklyRemaining: 100, weeklyResetAt: 100 })],
+    agents: burst(1, 10, 0, 20).map((agent) => ({ ...agent, expectedDuration: 20 })), horizon: 110, reportInterval: 100 },
+  { name: "idle-across-session-reset", subscriptions: [account("a", { sessionCapacity: 20, sessionRemaining: 20,
+    sessionBuffer: 0, sessionResetAt: 10 })],
+    agents: [...burst(2, 10, 0, 20), { id: "later-agent", at: 11, actualUnits: 10, duration: 20, expectedDuration: 20 }],
+    horizon: 40, reportInterval: 40 }
 ];

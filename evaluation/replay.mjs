@@ -16,6 +16,8 @@ export function runReplay(scenario, policy) {
     assert(Number.isSafeInteger(agent.at) && agent.at >= 0 && agent.at < horizon, "invalid arrival");
     assert(Number.isSafeInteger(agent.duration) && agent.duration > 0, "invalid duration");
     assert(agent.at + agent.duration < horizon, "every admitted replay agent must finish before the horizon");
+    if (agent.expectedDuration != null) assert(Number.isSafeInteger(agent.expectedDuration) && agent.expectedDuration >= 0
+      && agent.at + agent.expectedDuration <= WEEK_MINUTES, "invalid expected duration");
     assert(Number.isSafeInteger(agent.actualUnits) && agent.actualUnits > 0, "invalid actual cost");
   }
   const actual = structuredClone(subscriptions);
@@ -105,7 +107,8 @@ export function runReplay(scenario, policy) {
       let selectedId;
       if (policy.startsWith("reserved-")) {
         const allocation = allocateAgent(state, { id: agent.id, at: now, estimatedUnits: estimate.units,
-          expectedRevision: state.revision, allowedIds: agent.allowedIds });
+          expectedRevision: state.revision, allowedIds: agent.allowedIds,
+          ...(agent.expectedDuration == null ? {} : { spendAt: now + agent.expectedDuration }) });
         state = allocation.state;
         selectedId = allocation.selectedId;
       } else {

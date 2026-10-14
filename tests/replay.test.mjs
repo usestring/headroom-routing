@@ -89,3 +89,26 @@ test("90 delayed-report grids have no blocks when actual cost is covered by rese
   }
   assert.equal(checked, 90);
 });
+
+
+test("known idle duration prevents crediting spend to an already-expired weekly window", () => {
+  const scenario = SCENARIOS.find((entry) => entry.name === "idle-across-weekly-reset");
+  const baseline = runReplay(scenario, "snapshot-earliest");
+  const routing = runReplay(scenario, "reserved-quantile");
+  assert.equal(baseline.selected[0].subscriptionId, "early");
+  assert.equal(baseline.expiredWeeklyUnits, 200);
+  assert.equal(routing.selected[0].subscriptionId, "later");
+  assert.equal(routing.expiredWeeklyUnits, 190);
+  assert.equal(routing.sessionBlocks, 0);
+});
+
+test("idle commitments prevent allocating renewed session quota a second time", () => {
+  const scenario = SCENARIOS.find((entry) => entry.name === "idle-across-session-reset");
+  const baseline = runReplay(scenario, "snapshot-earliest");
+  const routing = runReplay(scenario, "reserved-quantile");
+  assert.deepEqual(baseline.selected.map((entry) => entry.subscriptionId), ["a", "a", "a"]);
+  assert.equal(baseline.sessionBlocks, 1);
+  assert.deepEqual(routing.selected.map((entry) => entry.subscriptionId), ["a", "a", null]);
+  assert.equal(routing.completed, 2);
+  assert.equal(routing.sessionBlocks, 0);
+});

@@ -14,6 +14,7 @@ export interface Subscription {
 
 export interface Request {
   at: number;
+  spendAt?: number;
   units: number;
   allowedIds?: readonly string[];
 }
@@ -112,6 +113,7 @@ export interface RoutingState {
 
 export interface AllocationInput {
   id: string;
+  spendAt?: number;
   at: number;
   estimatedUnits: number;
   expectedRevision: number;
