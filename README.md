@@ -120,6 +120,41 @@ are charged later in a separate simulated provider state. Held launches and upst
 are reported separately. A held launch is attempted once; replay does not model a retry queue.
 Observed results and limitations are in [the replay notes](docs/replay.md).
 
+## Go headroom score
+
+The `headroom` Go package (`github.com/usestring/headroom-routing/headroom`) is a smaller,
+stateless rule for ranking accounts from one provider reading each. It works on utilization
+percentages, keeps no reservation ledger, and plans no forecast.
+
+```go
+now := time.Now()
+current := headroom.Assess(currentUsage, now)
+st := headroom.Assess(headroom.Usage{ObservedAt: readAt, Windows: windows}, now)
+if st.Usable && headroom.WorthSwitching(current.Score, st.Score) {
+	// move the session to this account
+}
+```
+
+What leaving an account loses is weekly quota that resets before it is spent, so each account
+scores its weekly headroom weighted by how soon that headroom expires:
+
+```text
+ceiling  = 95 - 10 × (time to reset ÷ period)        85 just after a reset, 95 just before
+headroom = ceiling - utilization                      percentage points
+score    = headroom ÷ (hours to the weekly reset)²    hours floored at 15 minutes
+```
+
+Squaring the hours lets the quota closest to being lost win: 40 points left two hours from a reset
+scores 10, while 80 points left three days out scores about 0.015. Every window must be under its
+ceiling for an account to be usable, but only weekly windows score; the five-hour window refills
+all day, so it can shut an account but never ranks one. With several weekly windows the lowest
+score counts. A reading older than two minutes, missing the `five_hour` or `seven_day` window, or
+with an unknown utilization is not usable, and `Standing.Reason` says why. A running session moves
+only to an account scoring at least 1.5 times higher (`WorthSwitching`), since a move costs a
+restart and the prompt cache.
+
+Run its tests with `go test ./...`.
+
 ## Scope and limits
 
 All capacities use comparable integer work units; an average agent cost is an explicit assumption.
