@@ -10,6 +10,39 @@ estimates belong in the application that uses it. The exact planner is intended 
 and for evaluating cheaper routing policies. An optional beam planner provides bounded forecast
 search and explicitly reports when its result is approximate.
 
+## How this approach compares
+
+Subscription quota is a form of expiring inventory: jobs consume a finite balance, unused units
+disappear at reset, and the balance then renews. Headroom combines capacity protection, expiry-waste
+reduction, and accounting for work already committed. These mechanisms have established precedents;
+the library adapts them to overlapping five-hour and weekly limits across several accounts.
+
+| Approach | What carries over | How Headroom differs |
+| --- | --- | --- |
+| [Critical-level inventory rationing, Topkis (1968)](https://doi.org/10.1287/mnsc.15.3.160) | Ordinary demand must leave a protected stock level for more important demand. | The reserve admission rule maps directly: `sessionReserve` and `weeklyReserve` protect capacity that only requests with `useReservedCapacity: true` can consume. Callers choose the levels; Headroom does not calculate optimal thresholds from demand and shortage costs. |
+| [Littlewood's rule and airline capacity protection](https://en.wikipedia.org/wiki/Littlewood%27s_rule) | Keep some expiring capacity available for more valuable future demand. | Headroom supports protection levels, but does not implement Littlewood's reserve-sizing formula. It minimizes predicted blocked requests before waste, rather than maximizing expected revenue, and has no input for relative service values or a distribution of future sensitive demand. |
+| First-expiry allocation | Spend resources nearer expiry to reduce waste. | The forecast planner can choose later-expiring capacity to preserve an upcoming job's fit. The replay includes a strict earliest-expiry baseline for comparison. |
+| [Token-bucket rate limiting](https://www.rfc-editor.org/rfc/rfc2697.html) | Admit work only when capacity permits it. | Headroom models full renewal at reset rather than incremental refill. It also chooses among accounts and holds estimated spend for running or idle jobs; it does not implement RFC 2697's packet-metering algorithm. |
+
+For example, suppose an early-expiring account has 10 units left and a later account has 4.
+A 4-unit job arrives before a 10-unit job, with no reset between them. Strict earliest-expiry
+routing uses the early account first and leaves neither able to fit the larger job. Given that
+forecast, Headroom can route the small job to the later account and serve both.
+
+The JavaScript planner uses memoized dynamic programming to search feasible assignments under its
+stated objective; beam planning approximates that search when it prunes. Both use a shared ledger
+so accepted work reduces available capacity before a new usage report arrives. The planner serves
+a request whenever it fits the admission rules; sensitive requests get access to reserves but
+retain the same blocked-request penalty as ordinary requests.
+
+The smaller Go API uses a separate `headroom / hoursUntilReset^2` ranking heuristic. It neither
+searches a forecast nor maintains the ledger. The inverse-square weighting has no optimality claim
+from the inventory or revenue-management results above.
+
+Automatic reserve sizing from aggregate sensitive demand and relative service value is not
+implemented. The [detailed comparison and code map](docs/related-algorithms.md) explains the
+assumptions, limiting cases, and sources behind these relationships.
+
 ## Run locally
 
 Requires Node.js 22 or newer. No install is needed:
@@ -214,9 +247,6 @@ counterexample. Both modes require every admitted estimate to fit both buffered 
 
 Read [the full theory and OSS comparison](docs/theory.md) for the objective, timing semantics,
 reservation reconciliation, scenario expectations, and integration requirements.
-The [related algorithms comparison](docs/related-algorithms.md) places capacity protection in
-critical-level inventory rationing and revenue management; the underlying problem has established
-precedents.
 
 ## License
 
