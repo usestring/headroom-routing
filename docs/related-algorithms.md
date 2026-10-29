@@ -16,6 +16,51 @@ a claim to have exhaustively searched the literature or proved equivalence to a 
 | First-expiry allocation | Use capacity nearer expiry to reduce waste. | Always choosing earliest expiry can strand later indivisible or account-restricted jobs; the planner examines future feasibility. |
 | Token buckets and rate limiting | Admit work only when the applicable capacity constraints permit it. | A standard rate bucket replenishes incrementally; this model replenishes fully at resets and also chooses among accounts. |
 
+## How the policies compose
+
+The implementation combines related mechanisms, but does not implement all the named algorithms.
+The closest direct match is the reserve admission condition. Expiry handling is an optimization
+objective, and dynamic programming is the method used to search the allowed allocations.
+
+| Mechanism | Code location | How close is the match? |
+| --- | --- | --- |
+| Two-class critical-level admission | [`reservedCapacity` and `fits`](../src/model.mjs); Go [`Options` and `AssessWithOptions`](../headroom/headroom.go) | Direct match to a caller-selected threshold rule: ordinary work leaves the floor, sensitive work can use it. Optimal threshold selection and time-dependent class levels are absent. Go only checks positive headroom; JavaScript also checks and reserves the full estimated job cost. |
+| Littlewood protection levels | The same reserve fields and access flag | The protected-capacity mechanism is shared. Littlewood's calculation is not implemented: the APIs have no fare/value ratio or distribution of future sensitive demand from which to calculate an optimal reserve. |
+| First-expiry allocation | [`advance` and `compareScores`](../src/model.mjs); the `snapshot-earliest` baseline in [`runReplay`](../evaluation/replay.mjs) | The baseline explicitly sorts by earliest reset. The planner instead scores actual forecast waste, favoring earlier expiry only after minimizing blocks. Go's [`Urgency`](../headroom/headroom.go) weighs both headroom and reset time, so it is not strict first-expiry ordering either. |
+| Dynamic programming | Memoized `solve` inside [`selectSubscription`](../src/model.mjs) | Direct use of the general search technique over a custom state and objective. `beamSolve` approximates the search when it prunes. This does not make the objective or policy identical to Topkis's or Littlewood's. |
+| Rate-limit admission | [`fits` and `advance`](../src/model.mjs) | Shared capacity checks, with full renewal at reset rather than incremental token refill. The implementation does not run RFC 2697's metering or color-marking algorithm. |
+| Accounting for committed work | [`projectedSpend`](../src/reservations.mjs) and [`allocateAgent`](../src/allocation.mjs) | A separate accounting mechanism: idle estimates and unreported spend reduce available capacity before another launch. It is not supplied by expiry ordering or a reserve threshold alone. |
+
+For the JavaScript planner the composition is:
+
+```text
+snapshot minus outstanding commitments minus safety buffer
+  -> class-specific reserve and compatibility checks
+  -> simulate feasible account choices, resets and expected spend
+  -> minimize blocks, then weekly waste, then expiry-weighted waste and session pressure
+```
+
+The search serves a request whenever an eligible account fits the reserve constraints. It does not
+deliberately reject a feasible request to save capacity for later requests. A sensitive request
+receives access to protected capacity, but a missed sensitive request has the same objective penalty
+as a missed ordinary request. This differs from a general stochastic priority or revenue optimizer.
+
+Two limiting examples make the relationship concrete:
+
+- With one account, no buffer or outstanding debt, 30 units remaining, a 20-unit reserve, and a
+  10-unit job, ordinary work fits exactly. At 20 remaining it waits while sensitive work can run.
+  If the other quota window is nonbinding, this is the single-stock, two-class threshold rule.
+- When two accounts both fit a job that spends before either weekly reset, and no future work is
+  threatened, the planner favors earlier expiry. With an upcoming large or account-restricted job,
+  preserving its fit can take precedence. The existing [model scenarios](../tests/model.test.mjs)
+  include an earliest-expiry counterexample that routes a small job to the later account so both
+  jobs can run.
+
+Using a reserve calculated externally from Littlewood's formula would reuse that formula's
+protection level, under its assumptions. It would not turn the two-window forecast planner into
+Littlewood's entire policy. The remaining step toward that family is estimating reserve sizes from
+aggregate sensitive demand and relative service value; that capability is not implemented here.
+
 ## The closest precedent: critical-level inventory rationing
 
 Donald M. Topkis's 1968 paper, *Optimal Ordering and Rationing Policies in a Nonstationary Dynamic

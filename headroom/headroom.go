@@ -49,6 +49,8 @@ type Window struct {
 }
 
 // Options protects additional capacity for services authorized by the caller.
+// Its caller-chosen critical levels follow the admission mechanism described by
+// Topkis (1968), https://doi.org/10.1287/mnsc.15.3.160; it does not estimate optimal levels.
 type Options struct {
 	// ReservedCapacity is percentage points per window, in addition to Ceiling's
 	// safety reserve. Omitted windows protect no additional capacity.
@@ -98,6 +100,8 @@ func Ceiling(untilReset, period time.Duration) float64 {
 // account whose unspent quota is closest to being lost win even over one
 // with more headroom that resets much later: ten times nearer its reset, the
 // same headroom scores a hundred times higher.
+// The exponent is a heuristic; ../docs/related-algorithms.md explains why this
+// differs from first-expiry allocation and Littlewood's reserve-sizing rule.
 func Urgency(untilReset time.Duration) float64 {
 	hours := max(untilReset, MinHorizon).Hours()
 	return 1 / (hours * hours)

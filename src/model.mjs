@@ -89,6 +89,8 @@ function fits(subscription, request) {
     && subscription.weeklyRemaining - reservedCapacity(subscription, request, "weekly") >= request.units;
 }
 
+// Critical-level rationing protects future sensitive demand; the caller chooses the level.
+// Topkis (1968): https://doi.org/10.1287/mnsc.15.3.160; mapping in ../docs/related-algorithms.md.
 function reservedCapacity(subscription, request, window) {
   return request.useReservedCapacity === true ? 0 : (subscription[`${window}Reserve`] ?? 0);
 }
