@@ -48,6 +48,16 @@ type Window struct {
 	ResetsAt time.Time
 }
 
+// Options protects additional capacity for services authorized by the caller.
+type Options struct {
+	// ReservedCapacity is percentage points per window, in addition to Ceiling's
+	// safety reserve. Omitted windows protect no additional capacity.
+	ReservedCapacity map[string]float64
+	// UseReservedCapacity permits this assessment to use protected capacity.
+	// Ceiling's safety reserve still applies.
+	UseReservedCapacity bool
+}
+
 // Standing is how one account stands for a launch now.
 type Standing struct {
 	FiveHourHeadroom float64
@@ -72,7 +82,7 @@ type Standing struct {
 	Margin       float64
 	MarginWindow string
 	// Reason says why an account is not usable: "unread", "stale",
-	// "limit" or "reserve".
+	// "limit", "reserve", "reserved_capacity" or "invalid_options".
 	Reason string
 }
 
@@ -116,6 +126,17 @@ func WorthSwitching(from, to float64) bool {
 // several weekly windows the lowest score counts, since the tightest one
 // bounds what can still be spent.
 func Assess(u Usage, now time.Time) Standing {
+	return AssessWithOptions(u, now, Options{})
+}
+
+// AssessWithOptions applies optional capacity protection without changing Assess's defaults.
+// A reserve for an absent window or outside 0..100 points makes the options invalid.
+func AssessWithOptions(u Usage, now time.Time, options Options) Standing {
+	for name, reserve := range options.ReservedCapacity {
+		if _, ok := u.Windows[name]; !ok || math.IsNaN(reserve) || math.IsInf(reserve, 0) || reserve < 0 || reserve > 100 {
+			return Standing{Reason: "invalid_options"}
+		}
+	}
 	if !u.ObservedAt.IsZero() && (u.ObservedAt.After(now) || now.Sub(u.ObservedAt) > ObservedFreshness) {
 		return Standing{Reason: "stale"}
 	}
@@ -154,12 +175,18 @@ func Assess(u Usage, now time.Time) Standing {
 			left = min(w.ResetsAt.Sub(now), period)
 		}
 		ceiling := Ceiling(left, period)
+		protected := options.ReservedCapacity[name]
+		if options.UseReservedCapacity {
+			protected = 0
+		}
 		reason := ""
 		switch {
 		case used >= 100:
 			reason = "limit"
 		case used >= ceiling:
 			reason = "reserve"
+		case used >= ceiling-protected:
+			reason = "reserved_capacity"
 		}
 		if reason != "" {
 			// The window furthest from its reset is what keeps the account
@@ -169,7 +196,7 @@ func Assess(u Usage, now time.Time) Standing {
 			}
 			continue
 		}
-		head := ceiling - used
+		head := ceiling - protected - used
 		if head < out.Margin {
 			out.Margin, out.MarginWindow = head, name
 		}

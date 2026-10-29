@@ -107,3 +107,64 @@ func TestWorthSwitchingOnlyForAMuchHigherScore(t *testing.T) {
 		t.Fatalf("%v to %v: want a higher score inside the margin, not switched", from, to)
 	}
 }
+
+func TestProtectedCapacitySeparatesOrdinaryAndSensitiveWork(t *testing.T) {
+	u := week(70, 70, 7*24*time.Hour)
+	options := Options{ReservedCapacity: map[string]float64{FiveHour: 20, SevenDay: 10}}
+	if got := AssessWithOptions(u, epoch, options); got.Usable || got.Reason != "reserved_capacity" || got.Window != FiveHour {
+		t.Fatalf("ordinary assessment = %+v", got)
+	}
+	options.UseReservedCapacity = true
+	if got := AssessWithOptions(u, epoch, options); !got.Usable || got != Assess(u, epoch) {
+		t.Fatalf("sensitive assessment = %+v", got)
+	}
+	if got := AssessWithOptions(week(86, 70, 7*24*time.Hour), epoch, options); got.Usable || got.Reason != "reserve" {
+		t.Fatalf("sensitive work crossed safety reserve: %+v", got)
+	}
+	if got := AssessWithOptions(week(20, 100, 7*24*time.Hour), epoch, options); got.Usable || got.Reason != "limit" {
+		t.Fatalf("sensitive work crossed quota: %+v", got)
+	}
+}
+
+func TestProtectedCapacityChangesWeeklyRankingAndMargin(t *testing.T) {
+	u := week(20, 60, 42*time.Hour)
+	options := Options{ReservedCapacity: map[string]float64{SevenDay: 20}}
+	before, after := Assess(u, epoch), AssessWithOptions(u, epoch, options)
+	if !after.Usable || after.Headroom != before.Headroom-20 || after.Score >= before.Score || after.Margin != after.Headroom {
+		t.Fatalf("before %+v, after %+v", before, after)
+	}
+	u.Windows["seven_day_model"] = Window{Utilization: used(40), ResetsAt: epoch.Add(42 * time.Hour)}
+	options.ReservedCapacity["seven_day_model"] = 45
+	if got := AssessWithOptions(u, epoch, options); !got.Usable || got.Window != "seven_day_model" || got.Headroom != 7.5 {
+		t.Fatalf("additional weekly limit = %+v", got)
+	}
+}
+
+func TestProtectedCapacityDoesNotAuthorizeInvalidReadings(t *testing.T) {
+	options := Options{UseReservedCapacity: true, ReservedCapacity: map[string]float64{SevenDay: 20}}
+	u := week(20, 20, time.Hour)
+	u.ObservedAt = epoch.Add(-3 * time.Minute)
+	if got := AssessWithOptions(u, epoch, options); got.Usable || got.Reason != "stale" {
+		t.Fatalf("stale reading = %+v", got)
+	}
+	u.ObservedAt = epoch
+	w := u.Windows[SevenDay]
+	w.Utilization = nil
+	u.Windows[SevenDay] = w
+	if got := AssessWithOptions(u, epoch, options); got.Usable || got.Reason != "unread" {
+		t.Fatalf("unknown utilization = %+v", got)
+	}
+}
+
+func TestProtectedCapacityRejectsInvalidOptions(t *testing.T) {
+	for _, reserve := range []map[string]float64{
+		{FiveHour: -1}, {SevenDay: 101}, {SevenDay: math.NaN()}, {FiveHour: math.Inf(1)}, {"seven_days": 10},
+	} {
+		for _, access := range []bool{false, true} {
+			got := AssessWithOptions(week(10, 10, time.Hour), epoch, Options{ReservedCapacity: reserve, UseReservedCapacity: access})
+			if got.Usable || got.Reason != "invalid_options" {
+				t.Fatalf("options %+v, access %v: %+v", reserve, access, got)
+			}
+		}
+	}
+}

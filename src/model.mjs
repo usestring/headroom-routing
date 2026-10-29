@@ -54,6 +54,8 @@ export function validateSelectionInput({ now, horizon, subscriptions, requests, 
       const reset = units(subscription[`${window}ResetAt`], `${window}ResetAt`, now);
       assert(reset <= now + (window === "session" ? SESSION_MINUTES : WEEK_MINUTES), "next reset exceeds its window");
       assert(units(subscription[`${window}Buffer`] ?? 0, `${window}Buffer`) < capacity, "buffer must be below capacity");
+      const reserve = units(subscription[`${window}Reserve`] ?? 0, `${window}Reserve`);
+      assert(reserve <= capacity - (subscription[`${window}Buffer`] ?? 0), "reserve and buffer exceed capacity");
     }
     assert(subscription.weeklyResetAt <= horizon, "horizon must cover all current weekly resets");
     units(subscription.availableAt ?? now, "availableAt");
@@ -65,6 +67,7 @@ export function validateSelectionInput({ now, horizon, subscriptions, requests, 
     units(request.at, "request.at", previousAt);
     assert(request.at < horizon, "request must arrive before the horizon");
     units(request.units, "request.units", 1);
+    assert(request.useReservedCapacity == null || typeof request.useReservedCapacity === "boolean", "useReservedCapacity must be a boolean");
     if (request.spendAt != null) units(request.spendAt, "request.spendAt", request.at);
     assert((request.spendAt ?? request.at) <= now + WEEK_MINUTES, "expected spend exceeds one week");
     if (request.allowedIds != null) {
@@ -82,7 +85,12 @@ function eligible(subscription, request) {
 
 function fits(subscription, request) {
   return eligible(subscription, request) && subscription.availableAt <= request.at
-    && subscription.sessionRemaining >= request.units && subscription.weeklyRemaining >= request.units;
+    && subscription.sessionRemaining - reservedCapacity(subscription, request, "session") >= request.units
+    && subscription.weeklyRemaining - reservedCapacity(subscription, request, "weekly") >= request.units;
+}
+
+function reservedCapacity(subscription, request, window) {
+  return request.useReservedCapacity === true ? 0 : (subscription[`${window}Reserve`] ?? 0);
 }
 
 function outstandingSpend(entry) {
@@ -148,8 +156,10 @@ function retryAt(state, request, now, horizon) {
       }
       const times = [];
       if (entry.availableAt > at) times.push(entry.availableAt);
-      if (entry.sessionRemaining < request.units && entry.sessionRenewedRemaining >= request.units) times.push(entry.sessionResetAt);
-      if (entry.weeklyRemaining < request.units && entry.weeklyRenewedRemaining >= request.units) times.push(entry.weeklyResetAt);
+      for (const window of ["session", "weekly"]) {
+        const required = request.units + reservedCapacity(entry, request, window);
+        if (entry[`${window}Remaining`] < required && entry[`${window}RenewedRemaining`] >= required) times.push(entry[`${window}ResetAt`]);
+      }
       if (!times.length) break;
       const nextAt = Math.min(...times);
       entry = advance([entry], at, nextAt, Math.max(horizon, nextAt)).state[0];
@@ -263,7 +273,9 @@ export function selectSubscription(input) {
     score: best?.score ?? blocked.score,
     plan: best?.plan ?? blocked.plan,
     candidates,
-    projectedHeadroom: current.map((entry) => ({ id: entry.id, sessionRemaining: entry.sessionRemaining, weeklyRemaining: entry.weeklyRemaining })),
+    projectedHeadroom: current.map((entry) => ({ id: entry.id,
+      sessionRemaining: entry.sessionRemaining - reservedCapacity(entry, requests[0], "session"),
+      weeklyRemaining: entry.weeklyRemaining - reservedCapacity(entry, requests[0], "weekly") })),
     exploredStates: visited,
     planner,
     optimal: planner === "exact" || !pruned
