@@ -10,6 +10,39 @@ estimates belong in the application that uses it. The exact planner is intended 
 and for evaluating cheaper routing policies. An optional beam planner provides bounded forecast
 search and explicitly reports when its result is approximate.
 
+## How this approach compares
+
+Subscription quota is a form of expiring inventory: jobs consume a finite balance, unused units
+disappear at reset, and the balance then renews. Headroom combines capacity protection, expiry-waste
+reduction, and accounting for work already committed. These mechanisms have established precedents;
+the library adapts them to overlapping five-hour and weekly limits across several accounts.
+
+| Approach | What carries over | How Headroom differs |
+| --- | --- | --- |
+| [Critical-level inventory rationing, Topkis (1968)](https://doi.org/10.1287/mnsc.15.3.160) | Ordinary demand must leave a protected stock level for more important demand. | The reserve admission rule maps directly: `sessionReserve` and `weeklyReserve` protect capacity that only requests with `useReservedCapacity: true` can consume. Callers choose the levels; Headroom does not calculate optimal thresholds from demand and shortage costs. |
+| [Littlewood's rule and airline capacity protection](https://en.wikipedia.org/wiki/Littlewood%27s_rule) | Keep some expiring capacity available for more valuable future demand. | Headroom supports protection levels, but does not implement Littlewood's reserve-sizing formula. It minimizes predicted blocked requests before waste, rather than maximizing expected revenue, and has no input for relative service values or a distribution of future sensitive demand. |
+| First-expiry allocation | Spend resources nearer expiry to reduce waste. | The forecast planner can choose later-expiring capacity to preserve an upcoming job's fit. The replay includes a strict earliest-expiry baseline for comparison. |
+| [Token-bucket rate limiting](https://www.rfc-editor.org/rfc/rfc2697.html) | Admit work only when capacity permits it. | Headroom models full renewal at reset rather than incremental refill. It also chooses among accounts and holds estimated spend for running or idle jobs; it does not implement RFC 2697's packet-metering algorithm. |
+
+For example, suppose an early-expiring account has 10 units left and a later account has 4.
+A 4-unit job arrives before a 10-unit job, with no reset between them. Strict earliest-expiry
+routing uses the early account first and leaves neither able to fit the larger job. Given that
+forecast, Headroom can route the small job to the later account and serve both.
+
+The JavaScript planner uses memoized dynamic programming to search feasible assignments under its
+stated objective; beam planning approximates that search when it prunes. Both use a shared ledger
+so accepted work reduces available capacity before a new usage report arrives. The planner serves
+a request whenever it fits the admission rules; sensitive requests get access to reserves but
+retain the same blocked-request penalty as ordinary requests.
+
+The smaller Go API uses a separate `headroom / hoursUntilReset^2` ranking heuristic. It neither
+searches a forecast nor maintains the ledger. The inverse-square weighting has no optimality claim
+from the inventory or revenue-management results above.
+
+Automatic reserve sizing from aggregate sensitive demand and relative service value is not
+implemented. The [detailed comparison and code map](docs/related-algorithms.md) explains the
+assumptions, limiting cases, and sources behind these relationships.
+
 ## Run locally
 
 Requires Node.js 22 or newer. No install is needed:
@@ -36,6 +69,7 @@ const subscriptions = [{
   sessionRemaining: 50,
   sessionResetAt: 300,
   sessionBuffer: 10,
+  sessionReserve: 20,
   weeklyCapacity: 1000,
   weeklyRemaining: 500,
   weeklyResetAt: 10080
@@ -64,11 +98,30 @@ no release or publish workflow.
 admissible headroom = reported remaining
                    - projected unreported agent spend
                    - safety buffer
+                   - protected capacity (ordinary work only)
 ```
 
 A launch reserves its entire estimated cost immediately, even if the agent stays idle. It must fit
 within both the session and weekly windows. For 50 units remaining, a 10-unit buffer, and a 10-unit
-agent estimate, four agents may launch against an unchanged provider snapshot.
+agent estimate, four agents may launch against an unchanged provider snapshot when no protected
+capacity is configured. With `sessionReserve: 20`, two ordinary agents may launch, leaving two
+more launches for sensitive work.
+
+Optional `sessionReserve` and `weeklyReserve` protect integer work units on each subscription.
+Both default to zero. Ordinary requests must leave that capacity untouched; trusted callers can
+pass `useReservedCapacity: true` to `allocateAgent` or a forecast request to use it. Safety buffers
+still apply to every request. Each reserve plus its buffer must fit its window's total capacity.
+The example above allocates ordinary work; add the access flag only for a sensitive service.
+
+Reserves are floors on remaining capacity, renewed at every reset. They are not separate balances:
+all launches share the same spend ledger, and protected work reduces the headroom for later work.
+Reserves may expire unused, and sensitive requests can exhaust their available capacity. They do
+not preempt running work or change the planner's equal weighting of admitted request classes.
+The application must authorize the flag and preserve reserve settings when applying snapshots.
+
+Other use-case controls already include per-window safety buffers, compatibility restrictions
+(`allowedIds`), outages (`availableAt`/`enabled`), expected spend timing (`spendAt`), exact or beam
+planning, and cost-estimator options. [The theory](docs/theory.md) describes their assumptions.
 
 Optional `spendAt` describes when a forecast job is expected to spend its cost. Its full reservation
 survives intervening resets, and only spend before weekly expiry counts toward using that quota.
@@ -154,6 +207,28 @@ only to an account scoring at least 1.5 times higher (`WorthSwitching`), since a
 restart and the prompt cache.
 
 Run its tests with `go test ./...`.
+
+For service-specific capacity protection, use `AssessWithOptions` while existing `Assess` calls
+retain their behavior:
+
+```go
+options := headroom.Options{
+    ReservedCapacity: map[string]float64{
+        headroom.FiveHour: 20,
+        headroom.SevenDay: 10,
+    },
+    UseReservedCapacity: false,
+}
+ordinary := headroom.AssessWithOptions(currentUsage, now, options)
+options.UseReservedCapacity = true // only after the application authorizes sensitive work
+sensitive := headroom.AssessWithOptions(currentUsage, now, options)
+```
+
+Go reserves use percentage points, not the JavaScript planner's work units. They reduce each
+window's headroom in addition to the safety margin in `Ceiling`; only weekly windows affect the
+score. A protected boundary returns `Reason: "reserved_capacity"`. Nonfinite/out-of-range values
+or reserve names absent from the reading return `"invalid_options"`, even for sensitive work.
+This stateless score still cannot reserve a launch's cost or coordinate concurrent callers.
 
 ## Scope and limits
 

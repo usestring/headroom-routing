@@ -20,7 +20,7 @@ function checkRevision(state, expectedRevision) {
 }
 
 export function allocateAgent(state, input) {
-  const { id, at, estimatedUnits, expectedRevision, allowedIds, forecast = [], horizon, maxStates, spendAt, planner, beamWidth } = input;
+  const { id, at, estimatedUnits, expectedRevision, allowedIds, forecast = [], horizon, maxStates, spendAt, planner, beamWidth, useReservedCapacity } = input;
   assert(typeof id === "string" && id.length > 0, "agent id is required");
   units(at, "at");
   units(estimatedUnits, "estimatedUnits", 1);
@@ -33,7 +33,7 @@ export function allocateAgent(state, input) {
   checkRevision(state, expectedRevision);
   assert(at >= Math.max(state.observedAt, state.lastAllocatedAt), "allocation time cannot move backwards");
   const decision = selectSubscription({ subscriptions: state.subscriptions, ledger: state.ledger, now: at,
-    requests: [{ at, units: estimatedUnits, spendAt, ...(allowedIds == null ? {} : { allowedIds }) }, ...forecast], horizon, maxStates, planner, beamWidth });
+    requests: [{ at, units: estimatedUnits, spendAt, useReservedCapacity, ...(allowedIds == null ? {} : { allowedIds }) }, ...forecast], horizon, maxStates, planner, beamWidth });
   if (decision.selectedId === null) return { state, status: "waiting", selectedId: null, decision };
   const ledger = reserveAgent(state.ledger, { id, subscriptionId: decision.selectedId, estimatedUnits });
   return { state: { ...state, ledger, lastAllocatedAt: at, revision: state.revision + 1 }, status: "reserved", selectedId: decision.selectedId, decision };

@@ -8,6 +8,8 @@ export interface Subscription {
   weeklyResetAt: number;
   sessionBuffer?: number;
   weeklyBuffer?: number;
+  sessionReserve?: number;
+  weeklyReserve?: number;
   availableAt?: number;
   enabled?: boolean;
 }
@@ -17,6 +19,7 @@ export interface Request {
   spendAt?: number;
   units: number;
   allowedIds?: readonly string[];
+  useReservedCapacity?: boolean;
 }
 
 export interface AgentReservation {
@@ -122,6 +125,7 @@ export interface AllocationInput {
   estimatedUnits: number;
   expectedRevision: number;
   allowedIds?: readonly string[];
+  useReservedCapacity?: boolean;
   forecast?: readonly Request[];
   horizon?: number;
   maxStates?: number;
