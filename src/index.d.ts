@@ -10,6 +10,7 @@ export interface Subscription {
   weeklyBuffer?: number;
   availableAt?: number;
   enabled?: boolean;
+  expiresAt?: number;
 }
 
 export interface Request {

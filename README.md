@@ -74,6 +74,14 @@ Optional `spendAt` describes when a forecast job is expected to spend its cost. 
 survives intervening resets, and only spend before weekly expiry counts toward using that quota.
 Omitting it retains the immediate-charge forecast. Expected times never release actual ledger debt.
 
+Optional `expiresAt` is a fixed subscription expiration, in the same integer-minute time scale as
+the reset timestamps. Remaining quota is lost at that deadline and never replenished afterward.
+For example, `expiresAt: 60` prevents admissions and expected spend at minute 60 or later, even if
+a quota reset falls at the same time. Resets before expiration still replenish normally. Unused
+quota at expiration contributes to `expiredWeeklyUnits` and the earlier-expiry preference. Omit
+`expiresAt` for a subscription that continues renewing. The horizon must cover each account's next
+weekly reset or fixed expiration, whichever comes first.
+
 Among accounts that fit, the reference planner minimizes predicted unserved requests first, weekly
 waste second, and five-hour concentration afterward. When weekly waste ties, it prefers quota that
 expires earlier. It returns a null selection and a possible retry time when nothing fits.
@@ -154,6 +162,11 @@ only to an account scoring at least 1.5 times higher (`WorthSwitching`), since a
 restart and the prompt cache.
 
 Run its tests with `go test ./...`.
+
+For a subscription with a fixed end, set `Usage.ExpiresAt`. The scorer uses the earlier of that
+deadline and each window's reset for urgency and reserve tapering. `Standing.ResetsAt` reports
+that effective deadline. At or after expiration the account is unusable with reason `"expired"`;
+a zero `ExpiresAt` retains recurring-window behavior.
 
 ## Scope and limits
 

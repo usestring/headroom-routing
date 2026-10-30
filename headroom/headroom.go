@@ -30,6 +30,9 @@ const SwitchMargin = 1.5
 
 // Usage is one account's quota as last observed.
 type Usage struct {
+	// ExpiresAt is the subscription's fixed end, when remaining quota is lost
+	// without renewal. Zero means no fixed expiration is known.
+	ExpiresAt time.Time
 	// ObservedAt is when the reading was taken at its source; zero is as
 	// fresh as the call. A reading observed in the future, or more than
 	// ObservedFreshness before it is used, makes the account ineligible.
@@ -63,7 +66,8 @@ type Standing struct {
 	Headroom float64
 	// Window names the scoring window -- the weekly window that scores
 	// lowest, or the one that made the account unusable -- and ResetsAt is
-	// when it resets; zero for an unused window or an unread account.
+	// when it resets or the subscription expires, whichever comes first;
+	// zero for an unused window or an unread account.
 	Window   string
 	ResetsAt time.Time
 	// Margin is the least headroom any window has left, the five-hour one
@@ -72,7 +76,7 @@ type Standing struct {
 	Margin       float64
 	MarginWindow string
 	// Reason says why an account is not usable: "unread", "stale",
-	// "limit" or "reserve".
+	// "limit", "reserve" or "expired".
 	Reason string
 }
 
@@ -116,6 +120,9 @@ func WorthSwitching(from, to float64) bool {
 // several weekly windows the lowest score counts, since the tightest one
 // bounds what can still be spent.
 func Assess(u Usage, now time.Time) Standing {
+	if !u.ExpiresAt.IsZero() && !u.ExpiresAt.After(now) {
+		return Standing{Reason: "expired", ResetsAt: u.ExpiresAt}
+	}
 	if !u.ObservedAt.IsZero() && (u.ObservedAt.After(now) || now.Sub(u.ObservedAt) > ObservedFreshness) {
 		return Standing{Reason: "stale"}
 	}
@@ -153,6 +160,11 @@ func Assess(u Usage, now time.Time) Standing {
 			}
 			left = min(w.ResetsAt.Sub(now), period)
 		}
+		deadline := w.ResetsAt
+		if !u.ExpiresAt.IsZero() && (deadline.IsZero() || u.ExpiresAt.Before(deadline)) {
+			left = min(left, u.ExpiresAt.Sub(now))
+			deadline = u.ExpiresAt
+		}
 		ceiling := Ceiling(left, period)
 		reason := ""
 		switch {
@@ -164,8 +176,8 @@ func Assess(u Usage, now time.Time) Standing {
 		if reason != "" {
 			// The window furthest from its reset is what keeps the account
 			// shut longest.
-			if spent == nil || w.ResetsAt.After(spent.ResetsAt) {
-				spent = &Standing{Reason: reason, Window: name, ResetsAt: w.ResetsAt}
+			if spent == nil || deadline.After(spent.ResetsAt) {
+				spent = &Standing{Reason: reason, Window: name, ResetsAt: deadline}
 			}
 			continue
 		}
@@ -178,7 +190,7 @@ func Assess(u Usage, now time.Time) Standing {
 			continue
 		}
 		if score := WindowScore(head, left); score < out.Score {
-			out.Score, out.Headroom, out.Window, out.ResetsAt = score, head, name, w.ResetsAt
+			out.Score, out.Headroom, out.Window, out.ResetsAt = score, head, name, deadline
 		}
 	}
 	if spent != nil {
