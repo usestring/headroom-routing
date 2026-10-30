@@ -34,7 +34,7 @@ function stateKey(state, index) {
 }
 
 function admissionPressure(state) {
-  return state.reduce((total, entry) => total + (entry.sessionCapacity - entry.sessionRemaining) ** 2 / entry.sessionCapacity, 0);
+  return state.reduce((total, entry) => total + (entry.expired ? 0 : (entry.sessionCapacity - entry.sessionRemaining) ** 2 / entry.sessionCapacity), 0);
 }
 
 export function validateSelectionInput({ now, horizon, subscriptions, requests, maxStates }) {
@@ -55,7 +55,9 @@ export function validateSelectionInput({ now, horizon, subscriptions, requests, 
       assert(reset <= now + (window === "session" ? SESSION_MINUTES : WEEK_MINUTES), "next reset exceeds its window");
       assert(units(subscription[`${window}Buffer`] ?? 0, `${window}Buffer`) < capacity, "buffer must be below capacity");
     }
-    assert(subscription.weeklyResetAt <= horizon, "horizon must cover all current weekly resets");
+    if (subscription.expiresAt != null) units(subscription.expiresAt, "expiresAt");
+    assert(Math.min(subscription.weeklyResetAt, subscription.expiresAt ?? Infinity) <= horizon,
+      "horizon must cover each subscription's next weekly reset or expiration");
     units(subscription.availableAt ?? now, "availableAt");
     assert((subscription.availableAt ?? now) <= now + WEEK_MINUTES, "outage exceeds the theory horizon");
   }
@@ -77,7 +79,8 @@ export function validateSelectionInput({ now, horizon, subscriptions, requests, 
 }
 
 function eligible(subscription, request) {
-  return subscription.enabled !== false && (request.allowedIds == null || request.allowedIds.includes(subscription.id));
+  return subscription.enabled !== false && Math.max(request.at, request.spendAt ?? request.at) < (subscription.expiresAt ?? Infinity)
+    && (request.allowedIds == null || request.allowedIds.includes(subscription.id));
 }
 
 function fits(subscription, request) {
@@ -107,21 +110,27 @@ function commitRequest(state, candidate, request) {
 function advance(state, from, to, horizon) {
   const score = zeroScore();
   const next = state.map((subscription) => {
+    if (subscription.expired) return subscription;
     const entry = { ...subscription, pendingSpend: [...subscription.pendingSpend] };
     let at = from;
-    for (let event = Math.min(entry.sessionResetAt, entry.weeklyResetAt, entry.pendingSpend[0]?.at ?? Infinity);
-      event <= to; event = Math.min(entry.sessionResetAt, entry.weeklyResetAt, entry.pendingSpend[0]?.at ?? Infinity)) {
+    const nextEvent = () => Math.min(entry.sessionResetAt, entry.weeklyResetAt, entry.expiresAt ?? Infinity, entry.pendingSpend[0]?.at ?? Infinity);
+    for (let event = nextEvent(); event <= to; event = nextEvent()) {
       const used = entry.sessionCapacity - entry.sessionRemaining;
       score.sessionExposure += used * used / entry.sessionCapacity * (event - at) / SESSION_MINUTES;
+      if (entry.weeklyResetAt === event || entry.expiresAt === event) {
+        const wasted = Math.max(0, entry.weeklyRemaining + entry.projectedFutureUnits
+          + outstandingSpend(entry) + (entry.weeklyBuffer ?? 0));
+        score.expiredWeeklyUnits += wasted;
+        score.earlyExpiryUnitMinutes += wasted * (horizon - event + 1);
+      }
+      if (entry.expiresAt === event) {
+        return { ...entry, expired: true, sessionRemaining: 0, weeklyRemaining: 0, pendingSpend: [] };
+      }
       if (entry.sessionResetAt === event) {
         entry.sessionRemaining = entry.sessionRenewedRemaining - outstandingSpend(entry);
         entry.sessionResetAt += SESSION_MINUTES;
       }
       if (entry.weeklyResetAt === event) {
-        const wasted = Math.max(0, entry.weeklyRemaining + entry.projectedFutureUnits
-          + outstandingSpend(entry) + (entry.weeklyBuffer ?? 0));
-        score.expiredWeeklyUnits += wasted;
-        score.earlyExpiryUnitMinutes += wasted * (horizon - event + 1);
         entry.weeklyRemaining = entry.weeklyRenewedRemaining - outstandingSpend(entry);
         entry.weeklyResetAt += WEEK_MINUTES;
       }
@@ -152,6 +161,7 @@ function retryAt(state, request, now, horizon) {
       if (entry.weeklyRemaining < request.units && entry.weeklyRenewedRemaining >= request.units) times.push(entry.weeklyResetAt);
       if (!times.length) break;
       const nextAt = Math.min(...times);
+      if (nextAt >= (entry.expiresAt ?? Infinity)) break;
       entry = advance([entry], at, nextAt, Math.max(horizon, nextAt)).state[0];
       at = nextAt;
     }
@@ -165,19 +175,22 @@ export function selectSubscription(input) {
   assert(planner === "exact" || planner === "beam", "unknown planner");
   units(beamWidth, "beamWidth", 1);
   assert(beamWidth <= 256, "beamWidth cannot exceed 256");
-  const horizon = input.horizon ?? Math.max(now + 1, ...subscriptions.map((entry) => entry.weeklyResetAt));
+  const horizon = input.horizon ?? Math.max(now + 1,
+    ...subscriptions.map((entry) => Math.min(entry.weeklyResetAt, entry.expiresAt ?? Infinity)));
   validateSelectionInput({ now, horizon, subscriptions, requests, maxStates });
   const ids = new Set(subscriptions.map((entry) => entry.id));
   for (const agent of ledger.agents) assert(ids.has(agent.subscriptionId), `reservation for unknown subscription: ${agent.subscriptionId}`);
   const initial = [...subscriptions].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map((entry) => {
     const projected = projectedSpend(ledger, entry);
+    const expired = entry.expiresAt != null && entry.expiresAt < now;
     return {
       ...entry,
+      expired,
       availableAt: entry.availableAt ?? now,
       projectedFutureUnits: projected.futureUnits,
       pendingSpend: [],
-      sessionRemaining: entry.sessionRemaining - projected.sessionUnits - (entry.sessionBuffer ?? 0),
-      weeklyRemaining: entry.weeklyRemaining - projected.weeklyUnits - (entry.weeklyBuffer ?? 0),
+      sessionRemaining: expired ? 0 : entry.sessionRemaining - projected.sessionUnits - (entry.sessionBuffer ?? 0),
+      weeklyRemaining: expired ? 0 : entry.weeklyRemaining - projected.weeklyUnits - (entry.weeklyBuffer ?? 0),
       sessionRenewedRemaining: entry.sessionCapacity - projected.futureUnits - (entry.sessionBuffer ?? 0),
       weeklyRenewedRemaining: entry.weeklyCapacity - projected.futureUnits - (entry.weeklyBuffer ?? 0)
     };

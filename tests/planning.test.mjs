@@ -145,14 +145,15 @@ test("narrow beam can lose future pinned work and reports that approximation", (
   assert.equal(narrow.optimal, false);
 });
 
-test("100 seeded five-request fleets match the independent oracle including delayed settlements", () => {
+test("100 seeded five-request fleets match the oracle with delayed settlements and fixed expiration", () => {
   let seed = 73;
   const draw = (limit) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % limit; };
   for (let scenario = 0; scenario < 100; scenario++) {
     const subscriptions = ["a", "b", "c"].map((id, i) => {
       const capacity = 3 + draw(4);
       return sub(id, { sessionCapacity: capacity, sessionRemaining: draw(capacity + 1), sessionResetAt: 3 + i,
-        weeklyCapacity: 10, weeklyRemaining: 3 + draw(8), weeklyResetAt: [7, 8, 10][i] });
+        weeklyCapacity: 10, weeklyRemaining: 3 + draw(8), weeklyResetAt: [7, 8, 10][i],
+        expiresAt: [undefined, 6, 9][draw(3)] });
     });
     const requests = Array.from({ length: 5 }, (_, i) => ({ at: i, units: 1 + draw(4), spendAt: i + draw(7 - i),
       ...(draw(3) === 0 ? { allowedIds: [["a", "b", "c"][draw(3)]] } : {}) }));
