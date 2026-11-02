@@ -19,8 +19,10 @@ Public sources inspected on 2026-10-14:
 | [Bucket4j](https://github.com/bucket4j/bucket4j) | Token-bucket admission primitives and multiple bandwidth limits. | Enforces limits; does not choose among expiring subscriptions for this objective. |
 | [redis-cell](https://github.com/brandur/redis-cell) | GCRA rate limiting and retry/reset timing. | Useful pacing machinery; does not optimize weekly expiry across accounts. Its README also states best-effort maintenance. |
 
-These are useful precedents. This search did not find a ready-made algorithm with the combined
-objective below. That is a bounded finding, not proof that no such project exists. Earliest-deadline
+These are useful implementation precedents. The broader problem belongs to established inventory
+rationing and perishable-capacity allocation; see [related algorithms](related-algorithms.md) for
+the academic comparison and sources inspected on 2026-10-28. This OSS comparison does not establish
+novelty of the algorithm or objective. Earliest-deadline
 scheduling alone does not cover this problem: quotas are opportunities to spend, requests are
 indivisible, and the short window can prevent use of the long one.
 
@@ -35,7 +37,7 @@ an expanded state and matching tests before using the model for those plans.
 
 Each subscription supplies `sessionCapacity`, `sessionRemaining`, `sessionResetAt`,
 `weeklyCapacity`, `weeklyRemaining`, and `weeklyResetAt`, plus optional `sessionBuffer`,
-`weeklyBuffer`, `availableAt`, and `enabled`. Reset times and request times are integer minutes.
+`weeklyBuffer`, `sessionReserve`, `weeklyReserve`, `availableAt`, and `enabled`. Reset times and request times are integer minutes.
 `now` defaults to zero. Unknown quota fields and reset times in the past are rejected. The caller
 must supply fresh observations; this model does not verify a snapshot's observation age.
 A next reset exactly at `now` is applied before admission.
@@ -49,7 +51,7 @@ unless an expected `spendAt` is supplied; a mid-agent reset never rescues a requ
 when it launches.
 
 `requests[0]` is the launch being decided, at `now`. Later entries are a caller-supplied deterministic
-forecast, with `{at, units, spendAt?, allowedIds?}`. Compatibility belongs in `allowedIds`; include every
+forecast, with `{at, units, spendAt?, allowedIds?, useReservedCapacity?}`. Compatibility belongs in `allowedIds`; include every
 binding model-specific weekly limit when adapting real provider data. The horizon covers every
 current weekly reset and is at most one week. Requests at the horizon are outside the forecast.
 The default horizon is the latest current weekly reset, or one minute after now if all just reset.
@@ -63,6 +65,7 @@ projected spend for a window = remaining expected agent work
                             + actual work not yet included in that window's report
 
 admissible headroom = reported remaining - projected spend - safety buffer
+                   - protected capacity (unless useReservedCapacity is true)
 ```
 
 The launch fits only if its estimated cost is no greater than admissible headroom in **both**
@@ -79,6 +82,40 @@ five-hour capacity and zero weekly buffer. Average cost plus a buffer reduces ri
 guarantee safety against arbitrarily expensive agents. Later, estimate the remaining cost by job
 class, or choose a cost quantile and an explicit acceptable block probability. Include untracked
 external sessions and reporting lag when sizing the buffer.
+
+### Capacity protected for sensitive services
+
+`sessionReserve` and `weeklyReserve` are optional nonnegative integer work units per account,
+defaulting to zero. A reserve plus its safety buffer cannot exceed that window's capacity; equality
+disables ordinary admission for that window. An ordinary request fits only when its full estimate
+leaves at least the reserve after projected spend and the safety buffer. A request with
+`useReservedCapacity: true` can use the protected units, but never the buffer. The flag is an input
+from a trusted application, not an authentication or authorization mechanism.
+
+For 50 units remaining, 10 buffered, and 20 protected, ordinary work can reserve 20 units; sensitive
+work can reserve up to 40. All accepted requests subtract their full estimate from the same shared
+capacity. If sensitive work brings the balance below the protected floor, ordinary work waits.
+This is a critical-level policy, not a separate per-service wallet or a guarantee of future service.
+
+Each request in the forecast carries its own access flag. Exact and beam planners enforce the same
+floor at every arrival. The floor survives resets, and outstanding delayed commitments continue to
+reduce renewed capacity. `retryAt` includes the floor when checking renewed windows, and
+`projectedHeadroom` reports what the current request may use, including negative values. Protected
+capacity remains real quota: any unused units still count toward weekly expiry waste. Session
+pressure continues to measure shared commitment, independently of which class incurred it.
+
+`allocateAgent` forwards the access flag and commits the same ledger reservation for either class.
+Repeated accepted launch IDs remain idempotent and never acquire a second reservation. Persist
+reserve configuration alongside account snapshots; replacing the subscription list without these
+optional fields removes the protection, just as omitting a buffer removes that buffer.
+Upgrade every allocator sharing a pool before enabling reserves: older versions ignore the new
+fields, so a mix of allocator versions or rollback to an older allocator removes the protection.
+
+This policy deliberately may hold ordinary work even when raw quota remains. Inside those admission
+constraints the optimizer still minimizes total unserved requests before waste; it does not assign
+larger objective penalties to sensitive requests. It does not preempt running work, lend protected
+capacity, or automatically release it near reset. Callers may recompute reserve settings between
+decisions using their own demand estimates; the forecast holds the supplied floor fixed.
 
 `src/reservations.mjs` models the ledger with immutable transitions:
 

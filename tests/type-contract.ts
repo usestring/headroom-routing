@@ -39,3 +39,10 @@ allocateAgent(state, { id: "timed", at: 0, estimatedUnits: 10, spendAt: 60, expe
 // @ts-expect-error Only deterministic exact and beam planners are declared.
 selectSubscription({ subscriptions: [subscription], requests: [{ at: 0, units: 1 }], planner: "random" });
 void [planner, optimal];
+
+const protectedSubscription: Subscription = { ...subscription, sessionReserve: 20, weeklyReserve: 100 };
+selectSubscription({ subscriptions: [protectedSubscription], requests: [{ at: 0, units: 10, useReservedCapacity: true }] });
+allocateAgent(state, { id: "sensitive", at: 0, estimatedUnits: 10, expectedRevision: 0, useReservedCapacity: true,
+  forecast: [{ at: 1, units: 10, useReservedCapacity: false }] });
+// @ts-expect-error Access to protected capacity requires an explicit boolean.
+allocateAgent(state, { id: "invalid", at: 0, estimatedUnits: 10, expectedRevision: 0, useReservedCapacity: "yes" });
