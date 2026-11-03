@@ -149,3 +149,25 @@ export function estimateAgentUnits(history: readonly number[], options?: CostEst
 export function createRoutingState(input: { subscriptions: readonly Subscription[]; ledger?: Ledger; observedAt?: number }): RoutingState;
 export function allocateAgent(state: RoutingState, input: AllocationInput): AllocationResult;
 export function applyUsageSnapshot(state: RoutingState, input: UsageSnapshotInput): RoutingState;
+
+export interface FreeTierObservation {
+  atMs: number;
+  outcome: "free_success" | "free_limit" | "paid_success" | "error";
+}
+
+export interface FreeTierStanding {
+  availability: "available" | "exhausted" | "unknown";
+  observedAtMs: number | null;
+  fresh: boolean;
+  reason: "unread" | "stale" | "uncalibrated" | "limit" | "probe_error";
+  usable: false;
+  headroomPercent: null;
+  resetsAtMs: null;
+  recoveryInterval: { afterMs: number; byMs: number; widthMs: number } | null;
+}
+
+export function assessFreeTier(input: {
+  observations: readonly FreeTierObservation[];
+  nowMs: number;
+  maxAgeMs?: number;
+}): FreeTierStanding;

@@ -43,6 +43,12 @@ Automatic reserve sizing from aggregate sensitive demand and relative service va
 implemented. The [detailed comparison and code map](docs/related-algorithms.md) explains the
 assumptions, limiting cases, and sources behind these relationships.
 
+## Free tiers without a quota reading
+
+`assessFreeTier` (JavaScript) and `headroom.AssessFreeTier` (Go) retain observed availability and
+recovery bounds when remaining quota is unknown. A free success does not become 100% headroom
+or an assumed five-hour/daily reset. See the [availability and recovery example](docs/free-tier-observations.md).
+
 ## Run locally
 
 Requires Node.js 22 or newer. No install is needed:
