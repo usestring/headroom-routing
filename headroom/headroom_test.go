@@ -108,6 +108,37 @@ func TestWorthSwitchingOnlyForAMuchHigherScore(t *testing.T) {
 	}
 }
 
+func TestAssessUsesFixedExpirationBeforeTheNextReset(t *testing.T) {
+	u := week(20, 20, 7*24*time.Hour)
+	u.ExpiresAt = epoch.Add(time.Hour)
+	st := Assess(u, epoch)
+	if !st.Usable || !st.ResetsAt.Equal(u.ExpiresAt) || st.Score != WindowScore(st.Headroom, time.Hour) {
+		t.Fatalf("Assess = %+v, want the subscription expiration as the quota deadline", st)
+	}
+	if ordinary := Assess(week(20, 20, 7*24*time.Hour), epoch); st.Score <= ordinary.Score {
+		t.Fatalf("expiring score %v must exceed ordinary score %v", st.Score, ordinary.Score)
+	}
+	u.ExpiresAt = epoch.Add(8 * 24 * time.Hour)
+	if got := Assess(u, epoch); got != Assess(week(20, 20, 7*24*time.Hour), epoch) {
+		t.Fatalf("a later expiration changed the next reset: %+v", got)
+	}
+}
+
+func TestAssessRejectsExpiredSubscriptions(t *testing.T) {
+	for _, until := range []time.Duration{-time.Second, 0, time.Nanosecond} {
+		u := week(20, 20, 7*24*time.Hour)
+		u.ExpiresAt = epoch.Add(until)
+		st := Assess(u, epoch)
+		if until <= 0 {
+			if st.Usable || st.Reason != "expired" || st.Score != 0 || !st.ResetsAt.Equal(u.ExpiresAt) {
+				t.Fatalf("Assess at %v = %+v, want expired", until, st)
+			}
+		} else if !st.Usable || math.IsInf(st.Score, 0) {
+			t.Fatalf("Assess before expiration = %+v, want usable with a finite score", st)
+		}
+	}
+}
+
 func TestProtectedCapacitySeparatesOrdinaryAndSensitiveWork(t *testing.T) {
 	u := week(70, 70, 7*24*time.Hour)
 	options := Options{ReservedCapacity: map[string]float64{FiveHour: 20, SevenDay: 10}}
