@@ -12,6 +12,7 @@ export interface Subscription {
   weeklyReserve?: number;
   availableAt?: number;
   enabled?: boolean;
+  expiresAt?: number;
 }
 
 export interface Request {

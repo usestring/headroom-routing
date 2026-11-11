@@ -3,7 +3,7 @@ import { estimateAgentUnits, createRoutingState, allocateAgent, applyUsageSnapsh
 
 const subscription: Subscription = {
   id: "a", sessionCapacity: 100, sessionRemaining: 50, sessionResetAt: 300,
-  weeklyCapacity: 1000, weeklyRemaining: 500, weeklyResetAt: 10080
+  weeklyCapacity: 1000, weeklyRemaining: 500, weeklyResetAt: 10080, expiresAt: 10080
 };
 const ledger = reserveAgent(emptyLedger(), { id: "agent", subscriptionId: "a", estimatedUnits: 10 });
 const decision: Selection = selectSubscription({ subscriptions: [subscription], ledger, requests: [{ at: 0, units: 10 }] });
