@@ -172,3 +172,93 @@ export function assessFreeTier(input: {
   nowMs: number;
   maxAgeMs?: number;
 }): FreeTierStanding;
+
+export interface QuotaWindow {
+  /** Window name, unique within its account, such as `five_hour` or `weekly_all`. */
+  name: string;
+  /** Optional class such as `5h`, `weekly` or `monthly`; weekly and monthly windows drive ranking. */
+  label?: string;
+  usedPercent: number | null;
+  /** ISO 8601 time the reading was taken. */
+  observedAt: string | null;
+  /** Newest supporting observation when `observedAt` is the oldest of several; checked for future skew. */
+  latestObservedAt?: string | null;
+  /** ISO 8601 time the window refills. */
+  resetsAt: string | null;
+  durationHours?: number;
+  burnPercentPerHour?: number | null;
+}
+
+export interface QuotaAccount {
+  id: string;
+  provider: string;
+  scope: string;
+  status: "ok" | "unavailable" | "partial";
+  windows: readonly QuotaWindow[];
+}
+
+export interface ResetOffer {
+  id: string;
+  accountId: string;
+  expiresAt: string;
+  /** Exact quota window names. Omit or leave empty for a full reset. */
+  windows?: readonly string[];
+  redeemedAt?: string | null;
+}
+
+export interface ResetRecommendation {
+  offerId: string;
+  accountId: string;
+  provider: string;
+  expiresAt: string;
+  reason: "ordinary-quota-exhausted" | "expiring-reset-adds-weekly-capacity";
+}
+
+export interface HeadroomOptions {
+  nowMs?: number;
+  maxAgeMs?: number;
+  reservePercent?: number;
+  /** When false, an account at or below the reserve stays usable in the `reserve` tier. Default true. */
+  strictReserve?: boolean;
+  accountIds?: readonly string[];
+  resetOffers?: readonly ResetOffer[];
+}
+
+export type ReadingStatus = "ok" | "unavailable" | "unknown" | "stale" | "reset-unobserved";
+
+export interface WindowHeadroom extends QuotaWindow {
+  status: ReadingStatus;
+  remainingPercent: number | null;
+  availablePercent: number;
+  projectedUnusedPercent: number | null;
+  burnBasis: "measured" | "window-average" | null;
+}
+
+export interface AccountHeadroom {
+  id: string;
+  provider: string;
+  scope: string;
+  status: ReadingStatus | "partial" | "exhausted" | "reserve";
+  usable: boolean;
+  tier: "normal" | "reserve";
+  remainingPercent: number | null;
+  availablePercent: number;
+  score: number;
+  windows: WindowHeadroom[];
+}
+
+export interface HeadroomReport {
+  calculatedAt: string;
+  reservePercent: number;
+  accounts: AccountHeadroom[];
+  resetRecommendations?: ResetRecommendation[];
+}
+
+export function durationHours(name: string, label?: string): number | undefined;
+export function accountsFromQuotaReport(report: unknown): QuotaAccount[];
+export function readQuotaInput(input: unknown): QuotaAccount[];
+export function calculateHeadroom(accounts: readonly QuotaAccount[], options?: HeadroomOptions): HeadroomReport;
+export function rankAccounts(
+  accounts: readonly AccountHeadroom[],
+  options?: { preferred?: string; deprioritize?: readonly string[] }
+): AccountHeadroom[];

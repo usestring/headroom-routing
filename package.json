@@ -1,11 +1,15 @@
 {
   "name": "@usestring/headroom-routing",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Deterministic subscription quota routing with projected agent spend and safety buffers.",
+  "version": "0.1.0",
+  "description": "Subscription quota headroom, unused-allowance forecasts and deterministic routing for coding-agent subscriptions.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "headroom-routing": "bin/headroom-routing.mjs"
+  },
   "exports": {
     ".": {
       "types": "./src/index.d.ts",
@@ -13,11 +17,32 @@
     }
   },
   "types": "./src/index.d.ts",
-  "files": ["src", "evaluation", "README.md", "LICENSE", "docs"],
+  "files": [
+    "bin",
+    "src",
+    "evaluation",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
   "scripts": {
-    "build": "node --check src/index.mjs && node --check src/model.mjs && node --check src/reservations.mjs && node --check src/allocation.mjs && node --check src/cost.mjs && node --check src/free-tier.mjs",
+    "build": "node --check src/index.mjs && node --check src/model.mjs && node --check src/reservations.mjs && node --check src/allocation.mjs && node --check src/cost.mjs && node --check src/free-tier.mjs && node --check src/quota.mjs && node --check src/cli.mjs && node --check bin/headroom-routing.mjs",
     "test": "node --test tests/*.test.mjs",
     "evaluate": "node evaluation/run.mjs"
   },
-  "repository": { "type": "git", "url": "https://github.com/usestring/headroom-routing.git" }
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "keywords": [
+    "quota",
+    "rate-limit",
+    "subscription",
+    "coding-agent",
+    "routing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/usestring/headroom-routing.git"
+  }
 }

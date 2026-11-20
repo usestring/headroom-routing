@@ -46,3 +46,12 @@ allocateAgent(state, { id: "sensitive", at: 0, estimatedUnits: 10, expectedRevis
   forecast: [{ at: 1, units: 10, useReservedCapacity: false }] });
 // @ts-expect-error Access to protected capacity requires an explicit boolean.
 allocateAgent(state, { id: "invalid", at: 0, estimatedUnits: 10, expectedRevision: 0, useReservedCapacity: "yes" });
+
+import { calculateHeadroom, rankAccounts, readQuotaInput, QuotaAccount, HeadroomReport } from "../src/index";
+const quota: QuotaAccount = {
+  id: "local-codex", provider: "codex", scope: "local", status: "ok",
+  windows: [{ name: "weekly", label: "weekly", usedPercent: 20, observedAt: "2026-11-01T12:00:00Z", resetsAt: "2026-11-05T00:00:00Z", durationHours: 168 }]
+};
+const headroomReport: HeadroomReport = calculateHeadroom([quota], { reservePercent: 10, strictReserve: false });
+const best: string | undefined = rankAccounts(headroomReport.accounts, { deprioritize: ["opencode-go"] })[0]?.id;
+readQuotaInput({ accounts: [quota] });

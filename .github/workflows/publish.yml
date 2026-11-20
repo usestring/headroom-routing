@@ -1,0 +1,82 @@
+# Publishing is driven by the version in package.json: change it on main and this ships that
+# release to npm. Nothing else triggers a publish, so the number in the repo is the number users get.
+name: Publish
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.check.outputs.name }}
+      version: ${{ steps.check.outputs.version }}
+      new: ${{ steps.check.outputs.new }}
+    permissions:
+      contents: read
+      id-token: write # OIDC, which is how npm authenticates this repo
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # The path filter fires on any package.json edit, so decide here whether this version is new
+      # rather than letting npm fail the job over a republish.
+      - name: Is this version unpublished?
+        id: check
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          name="$(node -p 'require("./package.json").name')"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on npm; nothing to publish"
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.check.outputs.new == 'true'
+        run: npm run build
+      - if: steps.check.outputs.new == 'true'
+        run: npm test
+
+      # npm trusts this workflow file directly (trusted publishing), so there is no token to store
+      # or rotate. The OIDC exchange needs npm 11.5.1 or later, newer than what Node 22 bundles,
+      # and attaches provenance on its own.
+      - name: Publish to npm
+        if: steps.check.outputs.new == 'true'
+        run: |
+          npm install -g npm@11
+          npm publish --access public
+
+  github-release:
+    needs: publish
+    if: needs.publish.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Record the published version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.publish.outputs.version }}
+          TITLE: ${{ needs.publish.outputs.name }} v${{ needs.publish.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$TAG already has a GitHub release"
+            exit 0
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TITLE" --generate-notes
