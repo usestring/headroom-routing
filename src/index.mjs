@@ -3,3 +3,4 @@ export { emptyLedger, reserveAgent, recordSpend, reviseFutureSpend, completeAgen
 export { estimateAgentUnits } from "./cost.mjs";
 export { createRoutingState, allocateAgent, applyUsageSnapshot } from "./allocation.mjs";
 export { assessFreeTier } from "./free-tier.mjs";
+export { accountsFromQuotaReport, calculateHeadroom, durationHours, rankAccounts, readQuotaInput } from "./quota.mjs";

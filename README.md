@@ -49,6 +49,69 @@ assumptions, limiting cases, and sources behind these relationships.
 recovery bounds when remaining quota is unknown. A free success does not become 100% headroom
 or an assumed five-hour/daily reset. See the [availability and recovery example](docs/free-tier-observations.md).
 
+## Quota headroom from provider readings
+
+`calculateHeadroom` turns provider quota readings, given as percent used plus observation and reset
+times, into headroom for each account and each window. `rankAccounts` orders the usable accounts for
+the next job. The planner above works on integer units; this layer works directly on the percentages
+that coding-agent subscriptions report.
+
+```sh
+npx @usestring/headroom-routing quota --select < readings.json
+```
+
+`--select` prints the best account as JSON and exits with status 75 when no account can take work.
+Without it, the command prints the full report. Run `npx @usestring/headroom-routing --help` for
+every option.
+
+Input is `{ "accounts": QuotaAccount[] }`:
+
+```json
+{
+  "accounts": [{
+    "id": "laptop-codex",
+    "provider": "codex",
+    "scope": "local",
+    "status": "ok",
+    "windows": [
+      { "name": "five_hour", "label": "5h", "usedPercent": 40, "durationHours": 5,
+        "observedAt": "2026-11-19T12:00:00Z", "resetsAt": "2026-11-19T14:00:00Z" },
+      { "name": "weekly", "label": "weekly", "usedPercent": 20, "durationHours": 168,
+        "observedAt": "2026-11-19T12:00:00Z", "resetsAt": "2026-11-23T00:00:00Z" }
+    ]
+  }]
+}
+```
+
+The command also accepts a quota report with `sources` and `resetTimeline` arrays, plus an optional
+`fleet` group of the same shape. `accountsFromQuotaReport` converts that shape for library callers.
+
+Each window reports:
+
+- `remainingPercent`: allowance left now, floored at zero when usage runs over.
+- `availablePercent`: allowance left after the reserve, 10% by default.
+- `projectedUnusedPercent`: estimated allowance still unused at reset if the current pace continues,
+  or `null` when there is no basis for an estimate. `burnBasis` records whether the pace was
+  measured (`burnPercentPerHour`) or derived from average use since the window opened.
+
+An account takes the lowest value across its windows. An account is unusable if any window's reading
+is missing, older than two minutes, dated more than five seconds in the future, or past its reset
+time. With `strictReserve: false` (`--strict-reserve false`), an account at or below the reserve
+remains usable but ranks after every account above it, so interactive work can spend quota to zero.
+
+Ranking scores each weekly or monthly window by spare allowance divided by the squared hours until
+reset, then takes the account's lowest score. The account whose allowance would expire soonest
+goes first. The Go score below uses the same inverse-square shape; neither has an optimality claim.
+
+Pass `resetOffers` (`--reset-offers file.json`) to evaluate expiring one-off quota resets. The
+report then recommends the earliest eligible offer once ordinary quota is exhausted. It also
+recommends an offer in its final week when the current pace would run out of weekly allowance after
+the offer expires but before the automatic refill. Recommendations never change the observed
+headroom; the provider's next reading shows the effect of a redemption.
+
+Freshness is checked against the observation time supplied with each window. These readings are
+estimates: they cannot reserve capacity or guarantee that a provider will accept work.
+
 ## Run locally
 
 Requires Node.js 22 or newer. No install is needed:
@@ -64,10 +127,12 @@ smoke check is `tsc --noEmit --strict --target es2020 --module es2020 --moduleRe
 
 ## Import the module
 
-From this checkout:
+```sh
+npm install @usestring/headroom-routing
+```
 
 ```js
-import { createRoutingState, allocateAgent, estimateAgentUnits } from "./src/index.mjs";
+import { createRoutingState, allocateAgent, estimateAgentUnits } from "@usestring/headroom-routing";
 
 const subscriptions = [{
   id: "account-a",
@@ -93,10 +158,9 @@ const allocation = allocateAgent(state, {
 // Commit allocation.state using a transaction or compare-and-swap before launching.
 ```
 
-The package already declares an ESM export and TypeScript types under the working name
-`@usestring/headroom-routing`. It is marked `private: true`, version `0.0.0`, and is not published
-to npm. The API and its assumptions should be evaluated before a public package release. There is
-no release or publish workflow.
+The package ships ESM and TypeScript declarations. Releases publish to npm from
+`.github/workflows/publish.yml` whenever the `version` in `package.json` changes on `main`, with
+npm provenance attached. The API is pre-1.0, so a minor version may change it.
 
 ## Allocation rule
 
