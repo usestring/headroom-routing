@@ -1,0 +1,168 @@
+[
+  {
+    "name": "earliest unused offer with a usable scope",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": 60}}},
+      {"id": "alternate", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": 36}}}
+    ],
+    "offers": [
+      {"id": "later", "accountId": "primary", "hours": 240},
+      {"id": "expired", "accountId": "primary", "hours": 0},
+      {"id": "redeemed", "accountId": "primary", "hours": 1, "redeemedHours": -1},
+      {"id": "wrong-scope", "accountId": "alternate", "hours": 2, "windows": ["seven_day_model"]},
+      {"id": "winner", "accountId": "alternate", "hours": 3}
+    ],
+    "want": {"id": "winner", "reason": "ordinary-quota-exhausted"}
+  },
+  {
+    "name": "ties use offer ID",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": 60}}}
+    ],
+    "offers": [
+      {"id": "z-first-input", "accountId": "primary", "hours": 3},
+      {"id": "a-first-id", "accountId": "primary", "hours": 3}
+    ],
+    "want": {"id": "a-first-id", "reason": "ordinary-quota-exhausted"}
+  },
+  {
+    "name": "exhausted account refills after its offer expires",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": 60}}},
+      {"id": "alternate", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 10, "reset": 60}}}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 24}
+    ],
+    "want": {"id": "reset", "reason": "expiring-reset-adds-weekly-capacity"}
+  },
+  {
+    "name": "offer stays valid through exhausted account refill",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": 60}}},
+      {"id": "alternate", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 10, "reset": 60}}}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 60}
+    ]
+  },
+  {
+    "name": "unknown alternatives prevent confirmed exhaustion",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": 60}}},
+      {"id": "alternate", "windows": {}}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 61}
+    ]
+  },
+  {
+    "name": "stale offer reading cannot establish exhaustion",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": 60}}, "observedHours": -1}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 24}
+    ]
+  },
+  {
+    "name": "passed reset needs a fresh reading",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": -1}}}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 24}
+    ]
+  },
+  {
+    "name": "a spent model window prevents a partial reset from reopening the route",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 100, "reset": 60}, "seven_day_model": {"used": 100, "reset": 72}}}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 24, "windows": ["seven_day"]}
+    ]
+  },
+  {
+    "name": "final week offer bridges projected exhaustion to refill",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 72, "reset": 60}}},
+      {"id": "alternate", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 10, "reset": 60}}}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 24}
+    ],
+    "want": {"id": "reset", "reason": "expiring-reset-adds-weekly-capacity"}
+  },
+  {
+    "name": "offer is still valid when ordinary quota is projected to run out",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 72, "reset": 60}}},
+      {"id": "alternate", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 10, "reset": 60}}}
+    ],
+    "offers": [
+      {"id": "wait", "accountId": "primary", "hours": 48}
+    ]
+  },
+  {
+    "name": "offer misses tied weekly bottlenecks",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 72, "reset": 60}, "seven_day_model": {"used": 72, "reset": 60}}}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 24, "windows": ["seven_day"]}
+    ]
+  },
+  {
+    "name": "forecast has no gap before refill",
+    "provider": "claude",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 20, "reset": 60}}}
+    ],
+    "offers": [
+      {"id": "reset", "accountId": "primary", "hours": 24}
+    ]
+  },
+  {
+    "name": "Codex requires more than 20 percent used in a covered window",
+    "provider": "codex",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 20, "reset": 144}}}
+    ],
+    "offers": [
+      {"id": "weekly", "accountId": "primary", "hours": 72, "windows": ["seven_day"]}
+    ]
+  },
+  {
+    "name": "Codex can redeem at 21 percent used",
+    "provider": "codex",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 20, "reset": 3}, "seven_day": {"used": 21, "reset": 144}}}
+    ],
+    "offers": [
+      {"id": "weekly", "accountId": "primary", "hours": 72, "windows": ["seven_day"]}
+    ],
+    "want": {"id": "weekly", "reason": "expiring-reset-adds-weekly-capacity"}
+  },
+  {
+    "name": "Codex weekly reset leaves a spent short window closed",
+    "provider": "codex",
+    "accounts": [
+      {"id": "primary", "windows": {"five_hour": {"used": 100, "reset": 1}, "seven_day": {"used": 21, "reset": 144}}}
+    ],
+    "offers": [
+      {"id": "weekly", "accountId": "primary", "hours": 72, "windows": ["seven_day"]}
+    ]
+  }
+]

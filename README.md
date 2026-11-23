@@ -313,6 +313,14 @@ score. A protected boundary returns `Reason: "reserved_capacity"`. Nonfinite/out
 or reserve names absent from the reading return `"invalid_options"`, even for sensitive work.
 This stateless score still cannot reserve a launch's cost or coordinate concurrent callers.
 
+Use `headroom.RecommendReset(now, provider, readings, offers)` to evaluate one-use offers in Go.
+Pass all compatible account readings for that provider, keyed by billing account ID. Include an
+empty `Usage` for any compatible account whose quota is unread. The function picks the earliest
+eligible offer after confirmed exhaustion, or when redeeming before the deadline would cover a
+gap before an account's refill. It checks the Go scorer's admission rules against the offer's
+scope and estimates exhaustion from average weekly use. Apply a fresh provider reading after
+redemption to verify available headroom.
+
 ## Scope and limits
 
 All capacities use comparable integer work units; an average agent cost is an explicit assumption.

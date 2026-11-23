@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { accountsFromQuotaReport, calculateHeadroom, rankAccounts } from "../src/index.mjs";
@@ -205,3 +206,38 @@ test("the installed bin runs as a standalone executable", () => {
   assert.equal(failed.status, 1);
   assert.match(String(failed.stderr), /^headroom-routing: /);
 });
+
+const resetCases = JSON.parse(readFileSync(new URL("../headroom/testdata/reset-recommendations.json", import.meta.url), "utf8"));
+for (const { name, provider, accounts, offers, want } of resetCases) {
+  test(`shared reset policy: ${name}`, () => {
+    const values = accounts.map(({ id, windows, observedHours = 0 }) => ({
+      id,
+      provider,
+      status: "ok",
+      windows: Object.entries(windows).map(([name, { used, reset }]) => ({
+        name,
+        usedPercent: used,
+        observedAt: at(observedHours),
+        resetsAt: at(reset),
+        durationHours: name === "five_hour" ? 5 : 168
+      }))
+    }));
+    const resetOffers = offers.map(({ id, accountId, hours, windows, redeemedHours }) => ({
+      id,
+      accountId,
+      expiresAt: at(hours),
+      windows,
+      redeemedAt: redeemedHours === undefined ? undefined : at(redeemedHours)
+    }));
+    const chosen = want && resetOffers.find(({ id }) => id === want.id);
+    if (want) assert.ok(chosen, `fixture has no offer named ${want.id}`);
+    const expected = chosen ? [{
+      offerId: chosen.id,
+      accountId: chosen.accountId,
+      provider,
+      expiresAt: chosen.expiresAt,
+      reason: want.reason
+    }] : [];
+    assert.deepEqual(calculateHeadroom(values, { nowMs, resetOffers }).resetRecommendations, expected);
+  });
+}
