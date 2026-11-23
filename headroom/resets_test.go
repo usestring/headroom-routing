@@ -79,3 +79,65 @@ func TestResetRecommendations(t *testing.T) {
 		})
 	}
 }
+
+func TestResetForecastSubscriptionExpiration(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		expiresAt time.Time
+		want      bool
+	}{
+		{name: "before exhaustion", expiresAt: now.Add(12 * time.Hour)},
+		{name: "at exhaustion", expiresAt: now.Add(42 * time.Hour)},
+		{name: "after exhaustion", expiresAt: now.Add(48 * time.Hour), want: true},
+		{name: "no fixed expiration", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			short, weekly := 10.0, 72.0
+			reading := Usage{
+				ObservedAt: now, ExpiresAt: tc.expiresAt,
+				Windows: map[string]Window{
+					FiveHour: {Utilization: &short, ResetsAt: now.Add(3 * time.Hour)},
+					SevenDay: {Utilization: &weekly, ResetsAt: now.Add(60 * time.Hour)},
+				},
+			}
+			offer := ResetOffer{ID: "reset", AccountID: "account", ExpiresAt: now.Add(24 * time.Hour)}
+			got := RecommendReset(now, "claude", map[string]Usage{"account": reading}, []ResetOffer{offer})
+			if (got != nil) != tc.want {
+				t.Fatalf("got %+v, want recommendation: %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResetForecastCustomWeeklyWindow(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		windows []string
+		want    bool
+	}{
+		{name: "all windows", want: true},
+		{name: "custom weekly window", windows: []string{"model_weekly"}, want: true},
+		{name: "uncovered custom window", windows: []string{SevenDay}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			short, weekly, model := 10.0, 10.0, 72.0
+			reading := Usage{
+				ObservedAt: now,
+				Windows: map[string]Window{
+					FiveHour:       {Utilization: &short, ResetsAt: now.Add(3 * time.Hour)},
+					SevenDay:       {Utilization: &weekly, ResetsAt: now.Add(60 * time.Hour)},
+					"model_weekly": {Utilization: &model, ResetsAt: now.Add(60 * time.Hour)},
+				},
+			}
+			offer := ResetOffer{
+				ID: "reset", AccountID: "account", ExpiresAt: now.Add(24 * time.Hour), Windows: tc.windows,
+			}
+			got := RecommendReset(now, "claude", map[string]Usage{"account": reading}, []ResetOffer{offer})
+			if (got != nil) != tc.want {
+				t.Fatalf("got %+v, want recommendation: %v", got, tc.want)
+			}
+		})
+	}
+}

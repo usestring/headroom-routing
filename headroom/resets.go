@@ -4,7 +4,6 @@ import (
 	"maps"
 	"math"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -137,7 +136,7 @@ func bridgesWeeklyGap(u Usage, offer ResetOffer) bool {
 	firstLimit := math.Inf(1)
 	clearsFirstLimit := false
 	for name, w := range u.Windows {
-		if name != SevenDay && !strings.HasPrefix(name, SevenDay+"_") {
+		if name == FiveHour {
 			continue
 		}
 		remaining := w.ResetsAt.Sub(u.ObservedAt)
@@ -146,7 +145,8 @@ func bridgesWeeklyGap(u Usage, offer ResetOffer) bool {
 			continue
 		}
 		hoursToLimit := (100 - *w.Utilization) * elapsed.Hours() / *w.Utilization
-		if hoursToLimit >= remaining.Hours() {
+		if hoursToLimit >= remaining.Hours() ||
+			(!u.ExpiresAt.IsZero() && hoursToLimit >= u.ExpiresAt.Sub(u.ObservedAt).Hours()) {
 			continue
 		}
 		if hoursToLimit <= offer.ExpiresAt.Sub(u.ObservedAt).Hours() {
